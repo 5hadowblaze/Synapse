@@ -7,3 +7,4 @@
 - Series 5: `CMMotionManager` @ 100Hz — no `CMBatchedSensorManager`.
 - Watch UI stays trivial (status + haptics).
 - Do not build or own the React `web/` dashboard unless asked.
+- Firebase: download `GoogleService-Info.plist` from Console project `synapse-clinical-hz` into `Sources/iOS/` (gitignored). Use `.example` stub only for build-without-Firebase.

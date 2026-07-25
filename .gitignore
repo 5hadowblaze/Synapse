@@ -13,3 +13,5 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 .firebase/
+# Firebase iOS config (download from Console — never commit real keys)
+Sources/iOS/GoogleService-Info.plist

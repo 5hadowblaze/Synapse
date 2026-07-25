@@ -16,15 +16,16 @@ open Synapse.xcodeproj
 #    Repeat for SynapseWatch
 #    Bundle IDs stay locked: com.synapse.app / com.synapse.app.watchkitapp
 
-# 3. Firebase plist (project: synapse-clinical-hz, app: com.synapse.app)
-#    Real file should already be at Sources/iOS/GoogleService-Info.plist.
-#    If missing / REPLACE_ME stub only:
+# 3. Firebase plist (gitignored — never commit the real file)
+#    Project: synapse-clinical-hz · iOS app: com.synapse.app
+#    Download into Sources/iOS/GoogleService-Info.plist:
 firebase apps:sdkconfig IOS 1:325784899993:ios:b6115b338638970d050308 \
   --project synapse-clinical-hz \
   -o Sources/iOS/GoogleService-Info.plist
 #    Or Console → Project settings → Your apps → download plist into Sources/iOS/
-#    Fallback for build-only: cp Sources/iOS/GoogleService-Info.plist.example \
-#      Sources/iOS/GoogleService-Info.plist  (stub writer mode; no live Firestore)
+#    Fallback for build-only (no live Firestore):
+#      cp Sources/iOS/GoogleService-Info.plist.example Sources/iOS/GoogleService-Info.plist
+#    XcodeGen includes the plist when present locally; it is not in git.
 
 # 4. Clinical dashboard
 cd web && npm install && npm run dev   # http://localhost:5173

@@ -28,10 +28,16 @@ targets:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
+    # GoogleService-Info.plist is local-only (gitignored). Download from Firebase
+    # Console (synapse-clinical-hz) or copy the .example stub so the file exists.
     sources:
       - path: Sources/iOS
         excludes:
+          - GoogleService-Info.plist
           - GoogleService-Info.plist.example
+      - path: Sources/iOS/GoogleService-Info.plist
+        optional: true
+        buildPhase: resources
       - path: Sources/Shared
     dependencies:
       - target: SynapseWatch
