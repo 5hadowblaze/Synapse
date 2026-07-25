@@ -8,12 +8,12 @@ options:
   generateEmptyDirectories: true
   groupSortPosition: top
 
-# DEVELOPMENT_TEAM: leave empty for now — pick Team once in Xcode
+# DEVELOPMENT_TEAM: set for local device builds (Signing & Capabilities).
 # Signing & Capabilities (both Synapse and SynapseWatch targets).
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: QYDB6YBZ34
     CODE_SIGN_STYLE: Automatic
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: "1.0.0"

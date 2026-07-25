@@ -26,6 +26,8 @@
 	<string>Synapse starts a lightweight workout session so strike detection stays active.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Synapse reads wrist acceleration to detect punch strikes.</string>
+	<key>WKApplication</key>
+	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>com.synapse.app</string>
 	<key>WKRunsIndependentlyOfCompanionApp</key>
