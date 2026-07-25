@@ -26,9 +26,9 @@ final class ClockSyncClientTests: XCTestCase {
         client.interSampleDelayNanoseconds = 0
         client.attach(roundTrip: mock)
         let best = await client.runBurst()
-        XCTAssertEqual(best?.rttSeconds, 0.020, accuracy: 1e-12)
-        XCTAssertEqual(client.offsetSeconds, 1.1, accuracy: 1e-12)
-        XCTAssertEqual(client.bestRttSeconds, 0.020, accuracy: 1e-12)
+        XCTAssertEqual(best!.rttSeconds, 0.020, accuracy: 1e-12)
+        XCTAssertEqual(client.offsetSeconds!, 1.1, accuracy: 1e-12)
+        XCTAssertEqual(client.bestRttSeconds!, 0.020, accuracy: 1e-12)
     }
 
     func testBurstWithAllNilLeavesOffsetUnset() async {

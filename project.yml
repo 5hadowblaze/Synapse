@@ -35,6 +35,8 @@ targets:
         excludes:
           - GoogleService-Info.plist
           - GoogleService-Info.plist.example
+          - Voice/VoiceSecrets.plist
+          - Voice/VoiceSecrets.plist.example
       - path: Sources/iOS/GoogleService-Info.plist
         optional: true
         buildPhase: resources

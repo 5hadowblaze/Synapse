@@ -108,6 +108,22 @@ final class SessionWriter {
         }
     }
 
+    /// Latest discrete workout HR (Series 5 ~ every few seconds). Not fused to camera frames.
+    func updateHeartRate(_ event: HeartRateEvent) {
+        guard let sessionId else { return }
+        var fields: [String: Any] = [
+            "lastHeartRateBpm": event.bpm,
+            "lastHeartRatePhoneMs": event.phoneTimestamp * 1000,
+            "lastHeartRateWatchMs": event.watchTimestamp * 1000,
+            "lastHeartRateSource": event.source
+        ]
+        if let start = event.hkStart { fields["lastHeartRateHkStart"] = start }
+        if let end = event.hkEnd { fields["lastHeartRateHkEnd"] = end }
+        enqueue { [weak self] in
+            self?.patchSession(sessionId, fields: fields)
+        }
+    }
+
     func writeTrial(_ trial: TrialRecord, gaze: [GazeWindowSample], t0Ms: Double) {
         guard let sessionId else { return }
         enqueue { [weak self] in
@@ -141,6 +157,29 @@ final class SessionWriter {
                 "baselineGapMs": meanMs,
                 "baselineStdMs": stdMs
             ])
+        }
+    }
+
+    /// Sparse Focus desk epoch (not a PVT/Kinetic trial). Stored under `epochs/{index}`.
+    func writeFocusEpoch(_ epoch: FocusEpochSnapshot) {
+        guard let sessionId else { return }
+        enqueue { [weak self] in
+            self?.writeFocusEpochDoc(sessionId: sessionId, epoch: epoch)
+        }
+    }
+
+    func writeFocusRecap(_ recap: FocusRecap) {
+        guard let sessionId else { return }
+        var fields: [String: Any] = [
+            "focusFocusedSeconds": recap.focusedSeconds,
+            "focusBreakSeconds": recap.breakSeconds,
+            "focusFadeCount": recap.fadeCount,
+            "focusExtendedOnce": recap.extendedOnce,
+            "focusBaselineReady": recap.baselineReady
+        ]
+        if let mean = recap.meanHrBpm { fields["focusMeanHrBpm"] = mean }
+        enqueue { [weak self] in
+            self?.patchSession(sessionId, fields: fields)
         }
     }
 
@@ -300,5 +339,33 @@ final class SessionWriter {
         #endif
         stubWriteCount += 1
         print("[SessionWriter stub] trial \(trial.index) gaze=\(gaze.count)")
+    }
+
+    private func writeFocusEpochDoc(sessionId: String, epoch: FocusEpochSnapshot) {
+        var data: [String: Any] = [
+            "index": epoch.index,
+            "phase": epoch.phase,
+            "remainingMs": epoch.remainingMs,
+            "fadeSuggested": epoch.fadeSuggested
+        ]
+        if let v = epoch.fadeScore { data["fadeScore"] = v }
+        if let v = epoch.hrBpm { data["hrBpm"] = v }
+        if let v = epoch.arousal { data["arousalIndex"] = Double(v) }
+        if let v = epoch.motionEnergy { data["motionEnergy"] = v }
+
+        #if canImport(FirebaseFirestore)
+        if let db {
+            db.collection("sessions").document(sessionId)
+                .collection("epochs").document(String(epoch.index))
+                .setData(data) { [weak self] error in
+                    Task { @MainActor in
+                        self?.lastError = error?.localizedDescription
+                    }
+                }
+            return
+        }
+        #endif
+        stubWriteCount += 1
+        print("[SessionWriter stub] focus epoch \(epoch.index): \(data)")
     }
 }

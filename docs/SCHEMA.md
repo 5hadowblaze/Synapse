@@ -1,5 +1,7 @@
 # Synapse Firestore Schema
 
+> **Product / plan / ship status:** [`MASTER.md`](MASTER.md). This file remains the canonical **field-level** Firestore contract.
+
 Frozen for the hackathon so iOS (writer) and web (reader) can build in parallel.
 
 ## Collections
@@ -7,7 +9,7 @@ Frozen for the hackathon so iOS (writer) and web (reader) can build in parallel.
 ```
 sessions/{sessionId}
   athleteId: string
-  module: "kineticClock" | "visionPvt"
+  module: "kineticClock" | "visionPvt" | "focusDesk"
   startedAt: Timestamp | number   // ms epoch ok for demo
   status: "active" | "complete"
   clockOffsetMs: number           // Cristian's algorithm offset (credibility)
@@ -15,6 +17,13 @@ sessions/{sessionId}
   baselineGapMs: number | null    // mean metric after trial 10 (gap or module RT)
   baselineStdMs: number | null    // stddev of baseline window
   breakPointTrial: number | null  // trial index when fatigue onset fires
+  // Discrete Watch workout HR (Series 5 ~1 sample / few seconds — not camera-frame locked)
+  lastHeartRateBpm: number | null
+  lastHeartRatePhoneMs: number | null   // phone-clock ms (watch + Cristian offset)
+  lastHeartRateWatchMs: number | null
+  lastHeartRateSource: string | null    // e.g. "workoutBuilder"
+  lastHeartRateHkStart: number | null   // HK window (timeIntervalSinceReferenceDate)
+  lastHeartRateHkEnd: number | null
 
 sessions/{sessionId}/trials/{index}
   index: number                   // 0-based trial index (doc id may mirror this)
@@ -46,6 +55,7 @@ sessions/{sessionId}/trials/{index}/gaze/{docId}
 
 - **visionPvt** — classic single-flash PVT (saccade / arousal). No Watch required.
 - **kineticClock** — 8-direction clock; Watch strike timing + octant. `spatialMatch` flags accuracy; motor RT always persisted on strike.
+- **focusDesk** — health-aware Pomodoro (desk Focus). No PVT flashes / Kinetic punches. Session fields may include `focusFocusedSeconds`, `focusBreakSeconds`, `focusFadeCount`, `focusMeanHrBpm`, `focusExtendedOnce`, `focusBaselineReady`. Sparse samples live under `sessions/{id}/epochs/{index}` (`phase`, `remainingMs`, `fadeScore`, `hrBpm`, `arousalIndex`, `motionEnergy`, `fadeSuggested`). Baseline fields reuse `baselineGapMs` / `baselineStdMs` for the fade-score window.
 
 ## Octants (0..7)
 

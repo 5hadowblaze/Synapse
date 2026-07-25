@@ -27,6 +27,11 @@ struct WatchContentView: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
+            if let bpm = session.lastHeartRateBpm {
+                Text(String(format: "%.0f BPM", bpm))
+                    .font(.title2.monospacedDigit().weight(.bold))
+                    .foregroundStyle(.red.opacity(0.9))
+            }
             if let octant = session.lastDetectedOctant,
                let label = ClockOctant(rawValue: octant)?.label {
                 Text("Octant \(label)")

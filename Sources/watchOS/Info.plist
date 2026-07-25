@@ -21,9 +21,9 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Synapse uses a workout session to keep motion sampling alive during strikes.</string>
+	<string>Synapse reads workout heart rate and keeps a workout session active so motion sampling and strike detection stay alive.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Synapse starts a lightweight workout session so strike detection stays active.</string>
+	<string>Synapse starts a lightweight boxing workout session so strike detection and heart-rate sampling stay active.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Synapse reads wrist acceleration to detect punch strikes.</string>
 	<key>WKApplication</key>

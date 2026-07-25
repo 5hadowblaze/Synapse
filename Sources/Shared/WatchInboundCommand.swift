@@ -7,6 +7,8 @@ enum WatchInboundCommand: Equatable, Sendable {
     case calibrateStop
     case liveDirectionStart
     case liveDirectionStop
+    case motionEnergyStart
+    case motionEnergyStop
 
     static func parse(_ message: [String: Any]) -> WatchInboundCommand? {
         guard let type = message[WCMessageKey.type] as? String else { return nil }
@@ -22,6 +24,10 @@ enum WatchInboundCommand: Equatable, Sendable {
             return .liveDirectionStart
         case WCMessageKey.liveDirectionStop:
             return .liveDirectionStop
+        case WCMessageKey.motionEnergyStart:
+            return .motionEnergyStart
+        case WCMessageKey.motionEnergyStop:
+            return .motionEnergyStop
         default:
             return nil
         }
@@ -63,6 +69,17 @@ enum WatchOutboundMessage {
         [
             WCMessageKey.type: WCMessageKey.syncPing,
             WCMessageKey.t1: t1
+        ]
+    }
+
+    static func heartRate(_ event: HeartRateEvent) -> [String: Any] {
+        event.asMessage()
+    }
+
+    static func motionEnergy(_ energy: Double) -> [String: Any] {
+        [
+            WCMessageKey.type: WCMessageKey.motionEnergy,
+            WCMessageKey.energy: energy
         ]
     }
 }

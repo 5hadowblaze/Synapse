@@ -15,10 +15,22 @@ struct ContentView: View {
                 VisionSetupView(model: model)
             case .visionLive:
                 VisionLiveView(model: model)
-            case .kineticSetup:
+            case .kineticMainSetup:
+                KineticMainSetupView(model: model)
+            case .kineticMainLive:
+                KineticMainLiveView(model: model)
+            case .kineticDebugSetup:
                 KineticSetupView(model: model)
-            case .kineticLive:
+            case .kineticDebugLive:
                 KineticLiveView(model: model)
+            case .focusSetup:
+                FocusSetupView(model: model)
+            case .focusLive:
+                FocusLiveView(model: model)
+            case .focusBreak:
+                FocusBreakView(model: model)
+            case .focusRecap:
+                FocusRecapView(model: model)
             }
 
             if model.showBreakPointFlash {
@@ -32,8 +44,14 @@ struct ContentView: View {
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
+
+            // Above routes + break-point flash so the orb stays tappable.
+            VoiceAssistantOrbView(voice: model.voiceAssistant)
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $model.showSettings) {
+            SettingsSheet(model: model)
+        }
     }
 }
 
@@ -43,50 +61,89 @@ struct HubView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("SYNAPSE")
-                    .font(.largeTitle.weight(.bold))
-                    .foregroundStyle(.white)
-                Text("Test battery")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.55))
-                Text(model.phoneSession.statusText)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("SYNAPSE")
+                            .font(.largeTitle.weight(.bold))
+                            .foregroundStyle(.white)
+                        Text("Focus · health-aware Pomodoro")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.55))
+                        Text(model.phoneSession.statusText)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    Spacer()
+                    SettingsGearButton { model.showSettings = true }
+                }
+                .padding(.top, 12)
+
+                ModuleCard(
+                    title: "Focus",
+                    subtitle: "Health-aware Pomodoro · face + HR",
+                    accent: .teal
+                ) {
+                    model.openFocus()
+                }
+
+                FocusPatternTipsCard(tips: model.patternStore.tips)
+
+                Text("Lab")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .padding(.top, 4)
+
+                ModuleCard(
+                    title: "Vision PVT",
+                    subtitle: "Single-flash oculomotor · TrueDepth saccade & arousal",
+                    accent: .cyan
+                ) {
+                    model.openVision()
+                }
+
+                ModuleCard(
+                    title: "Kinetic Clock",
+                    subtitle: "3D Batak · air-punch the lit pad · Watch strikes",
+                    accent: .green
+                ) {
+                    model.openKinetic()
+                }
+
+                Button("Canned Replay") {
+                    model.runCannedReplay()
+                }
+                .buttonStyle(.bordered)
+                .font(.caption)
+
+                Text(firebaseLine)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.white.opacity(0.4))
+
+                if let bpm = model.phoneSession.lastHeartRateBpm {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.red.opacity(0.85))
+                            .frame(width: 8, height: 8)
+                        Text(String(format: "Watch HR %.0f bpm", bpm))
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.red.opacity(0.9))
+                        if !model.isWatchConnected {
+                            Text("· stale?")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                } else if model.isWatchConnected {
+                    Text("Watch HR · waiting for workout sample…")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.35))
+                }
             }
-            .padding(.top, 12)
-
-            ModuleCard(
-                title: "Vision PVT",
-                subtitle: "Single-flash oculomotor · TrueDepth saccade & arousal",
-                accent: .cyan
-            ) {
-                model.openVision()
-            }
-
-            ModuleCard(
-                title: "Kinetic Clock",
-                subtitle: "8-direction punch · front camera arm + Watch strikes",
-                accent: .green
-            ) {
-                model.openKinetic()
-            }
-
-            Spacer()
-
-            Button("Canned Replay") {
-                model.runCannedReplay()
-            }
-            .buttonStyle(.bordered)
-            .font(.caption)
-
-            Text(firebaseLine)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.white.opacity(0.4))
+            .padding(.horizontal, 24)
+            .padding(.bottom, 28)
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 28)
     }
 
     private var firebaseLine: String {
@@ -124,6 +181,63 @@ struct ModuleCard: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct SettingsGearButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "gearshape.fill")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color.white.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
+    }
+}
+
+struct SettingsSheet: View {
+    @Bindable var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Kinetic") {
+                    Button {
+                        model.openKineticDebug()
+                    } label: {
+                        Label("Debug Kinetic (Test UI)", systemImage: "wrench.and.screwdriver")
+                    }
+
+                    Picker("Arm side", selection: $model.kineticArmSide) {
+                        ForEach(KineticArmSide.allCases, id: \.self) { side in
+                            Text(side.label).tag(side)
+                        }
+                    }
+
+                    Toggle("Show face mesh on main", isOn: $model.showFaceMeshOnMain)
+                }
+
+                Section {
+                    Text("Main Kinetic uses the floating 3D Batak clock. Air-punch only — no screen taps to score.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -221,7 +335,219 @@ struct VisionLiveView: View {
     }
 }
 
-// MARK: - Kinetic
+// MARK: - Kinetic main (production Batak)
+
+struct KineticMainSetupView: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        ZStack {
+            cinematicCamera
+            BatakClockSceneView(
+                activeOctant: model.kineticPreviewOctant,
+                facePositionCamera: model.faceTracker.facePositionCamera,
+                depthMeters: 0.7
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            VStack(spacing: 0) {
+                HStack(alignment: .top) {
+                    Button { model.returnToHub() } label: {
+                        Label("Hub", systemImage: "chevron.left")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                    SettingsGearButton { model.showSettings = true }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+
+                Text("Kinetic Clock")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+
+                Text(model.hudMessage)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.green.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
+
+                if !model.isWatchConnected {
+                    WatchWarningBanner()
+                        .padding(.horizontal, 24)
+                        .padding(.top, 10)
+                }
+
+                Spacer()
+
+                VStack(spacing: 12) {
+                    Text(setupHint)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+
+                    HStack(spacing: 12) {
+                        Button("Calibrate Watch") { model.calibrateWatch() }
+                            .buttonStyle(.bordered)
+                            .tint(.orange)
+                            .disabled(model.isWatchCalibrating || !model.isWatchConnected)
+                        Button("Start") { model.startKineticSession() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 24)
+                .padding(.bottom, 28)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cinematicCamera: some View {
+        FaceARPreviewView(
+            session: model.faceTracker.session,
+            isTracked: model.faceTracker.isTracking,
+            saccadeFlashToken: model.faceTracker.saccadeFlashToken,
+            armJoints: model.faceTracker.armJoints,
+            armBones: model.faceTracker.armBones,
+            faceMeshOpacity: model.showFaceMeshOnMain ? 0.22 : 0,
+            showGazeRay: false,
+            showTrackingRing: false,
+            onAttached: { model.faceTracker.refreshPreviewAnchors() }
+        )
+        .ignoresSafeArea()
+    }
+
+    private var setupHint: String {
+        if model.isWatchCalibrating {
+            return "Hold still · face phone · arms neutral (10s)"
+        }
+        if model.isWatchConnected {
+            return "Air-punch toward the lit pad. Watch records the strike — no screen taps."
+        }
+        return "Connect Apple Watch so punches register. Camera lights spokes as you aim."
+    }
+}
+
+struct KineticMainLiveView: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        ZStack {
+            FaceARPreviewView(
+                session: model.faceTracker.session,
+                isTracked: model.faceTracker.isTracking,
+                saccadeFlashToken: model.faceTracker.saccadeFlashToken,
+                armJoints: model.faceTracker.armJoints,
+                armBones: model.faceTracker.armBones,
+                faceMeshOpacity: model.showFaceMeshOnMain ? 0.18 : 0,
+                showGazeRay: false,
+                showTrackingRing: false,
+                onAttached: { model.faceTracker.refreshPreviewAnchors() }
+            )
+            .ignoresSafeArea()
+
+            BatakClockSceneView(
+                activeOctant: model.kineticEngine.activeOctant,
+                lastDetectedOctant: model.lastDetectedOctant ?? model.kineticPreviewOctant,
+                spatialMatch: model.kineticEngine.lastSpatialMatch,
+                facePositionCamera: model.faceTracker.facePositionCamera,
+                depthMeters: 0.7
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            VStack(spacing: 0) {
+                HStack(alignment: .top) {
+                    Button { model.stopKineticSession() } label: {
+                        Label("Hub", systemImage: "chevron.left")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                    SettingsGearButton { model.showSettings = true }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+
+                if !model.isWatchConnected {
+                    WatchWarningBanner()
+                        .padding(.horizontal, 24)
+                        .padding(.top, 8)
+                }
+
+                Spacer()
+
+                VStack(spacing: 8) {
+                    Text(minimalHUD)
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(model.kineticEngine.lastSpatialMatch == false ? Color.orange : Color.green)
+                        .multilineTextAlignment(.center)
+
+                    if let acc = model.kineticEngine.spatialAccuracyPercent {
+                        Text(String(format: "Spatial %.0f%%", acc))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.cyan.opacity(0.85))
+                    }
+
+                    Button("Stop") { model.stopKineticSession() }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 28)
+            }
+        }
+    }
+
+    private var minimalHUD: String {
+        let target = model.kineticEngine.activeOctant
+            .flatMap { ClockOctant(rawValue: $0)?.label } ?? "—"
+        let detected = model.lastDetectedOctant
+            .flatMap { ClockOctant(rawValue: $0)?.label } ?? "—"
+        let matchLabel: String = {
+            guard let m = model.kineticEngine.lastSpatialMatch else { return "—" }
+            return m ? "match" : "miss"
+        }()
+        return "Target \(target) · \(detected) · \(matchLabel)"
+    }
+}
+
+struct WatchWarningBanner: View {
+    var body: some View {
+        Text("Apple Watch not connected — strikes won’t register")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.black)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Color.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+// MARK: - Kinetic debug (legacy Test UI)
+
+struct KineticArmSideToggle: View {
+    @Binding var selection: KineticArmSide
+
+    var body: some View {
+        Picker("Arm", selection: $selection) {
+            ForEach(KineticArmSide.allCases, id: \.self) { side in
+                Text(side.label).tag(side)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityLabel("Arm side")
+    }
+}
 
 struct KineticSetupView: View {
     @Bindable var model: AppModel
@@ -239,7 +565,7 @@ struct KineticSetupView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                ModuleChrome(title: "Kinetic Clock", model: model) {
+                ModuleChrome(title: "Debug Kinetic", model: model) {
                     model.returnToHub()
                 }
 
@@ -253,15 +579,12 @@ struct KineticSetupView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 6)
 
+                KineticArmSideToggle(selection: $model.kineticArmSide)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+
                 if !model.isWatchConnected {
-                    Text("Apple Watch not connected — strikes won’t register")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.black)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    WatchWarningBanner()
                         .padding(.horizontal, 24)
                         .padding(.top, 8)
                 }
@@ -309,10 +632,11 @@ struct KineticSetupView: View {
         if model.isWatchCalibrating {
             return "Hold still · face phone · arms neutral (10s)"
         }
+        let arm = model.kineticArmSide.label.lowercased()
         if model.isWatchConnected {
-            return "Point your arm at spokes (camera). Calibrate Watch for strike IMU quality."
+            return "Point your \(arm) at spokes (camera). Calibrate Watch for strike IMU quality."
         }
-        return "Point your arm at spokes — face mesh + arm work without Watch. Connect Watch for strikes."
+        return "Point your \(arm) at spokes — face mesh + arm work without Watch. Connect Watch for strikes."
     }
 
     private var trackingChip: some View {
@@ -345,21 +669,17 @@ struct KineticLiveView: View {
             Color.black.ignoresSafeArea()
 
             VStack(spacing: 12) {
-                ModuleChrome(title: "Kinetic Clock", model: model) {
+                ModuleChrome(title: "Debug Kinetic", model: model) {
                     model.stopKineticSession()
                 }
 
                 if !model.isWatchConnected {
-                    Text("Apple Watch not connected — strikes won’t register")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.black)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    WatchWarningBanner()
                         .padding(.horizontal, 24)
                 }
+
+                KineticArmSideToggle(selection: $model.kineticArmSide)
+                    .padding(.horizontal, 24)
 
                 if let acc = model.kineticEngine.spatialAccuracyPercent {
                     Text(String(format: "Spatial accuracy %.0f%%", acc))
@@ -442,7 +762,7 @@ struct ModuleChrome: View {
             Text(model.hudMessage)
                 .font(.headline.monospacedDigit())
                 .foregroundStyle(.green)
-            if model.route == .kineticSetup || model.route == .kineticLive {
+            if model.isKineticRoute {
                 KineticTrackingChip(model: model)
             } else {
                 FaceQualityChip(model: model)
@@ -503,6 +823,11 @@ struct KineticTrackingChip: View {
                 Text("· No Watch")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.orange)
+            }
+            if let bpm = model.phoneSession.lastHeartRateBpm {
+                Text(String(format: "· HR %.0f", bpm))
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.red.opacity(0.9))
             }
         }
     }

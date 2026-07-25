@@ -10,6 +10,8 @@ final class WatchSessionManager: NSObject {
     var lastRttMs: Double?
     var lastDetectedOctant: Int?
     var isCalibrating = false
+    /// Latest workout heart rate (BPM) from HealthKit during keep-alive.
+    private(set) var lastHeartRateBpm: Double?
     /// True after `startMonitoring()`; display sleep must not clear this.
     private(set) var isMonitoring = false
 
@@ -24,6 +26,10 @@ final class WatchSessionManager: NSObject {
     private var pendingStrikeAfterSync: (watchTime: WatchTime, peakG: Double, octant: Int?)?
     private var calibrationTimeoutTask: Task<Void, Never>?
     private var didWireCallbacks = false
+    /// Throttle HR over WC — Series 5 updates slowly; avoid flooding phone.
+    private var lastHeartRateSentAt: TimeInterval = 0
+    private var lastHeartRateSentBpm: Double?
+    private let heartRateMinInterval: TimeInterval = 4.0
 
     override init() {
         let transport = LiveWatchConnectivityTransport()
@@ -77,8 +83,14 @@ final class WatchSessionManager: NSObject {
         motion.onLiveDirection = { [weak self] octant in
             self?.sendLiveDirection(octant)
         }
+        motion.onMotionEnergy = { [weak self] energy in
+            self?.sendMotionEnergy(energy)
+        }
         motion.onCalibrationFinished = { [weak self] success in
             self?.handleCalibrationFinished(success: success)
+        }
+        workout.onHeartRate = { [weak self] bpm, start, end in
+            self?.handleHeartRate(bpm: bpm, hkStart: start, hkEnd: end)
         }
     }
 
@@ -103,6 +115,18 @@ final class WatchSessionManager: NSObject {
 
     func stopLiveDirectionStream() {
         motion.isStreamingLiveDirection = false
+        statusText = motion.isCalibrated ? "Calibrated" : "Armed"
+    }
+
+    func startMotionEnergyStream() {
+        if !motion.isRunning { motion.start() }
+        motion.isStreamingLiveDirection = false
+        motion.isStreamingMotionEnergy = true
+        statusText = "Focus stillness on"
+    }
+
+    func stopMotionEnergyStream() {
+        motion.isStreamingMotionEnergy = false
         statusText = motion.isCalibrated ? "Calibrated" : "Armed"
     }
 
@@ -197,6 +221,13 @@ final class WatchSessionManager: NSObject {
         // Skip transferUserInfo for live stream — too chatty when unreachable.
     }
 
+    private func sendMotionEnergy(_ energy: Double) {
+        let payload = WatchOutboundMessage.motionEnergy(energy)
+        if transport.isReachable {
+            transport.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+        }
+    }
+
     private func sendStrike(watchTime: WatchTime, peakG: Double, detectedOctant: Int?) {
         switch StrikeDelivery.prepare(
             watchTime: watchTime,
@@ -254,6 +285,32 @@ final class WatchSessionManager: NSObject {
         sendOrTransfer(WatchOutboundMessage.calibrateResult(success: success))
     }
 
+    private func handleHeartRate(bpm: Double, hkStart: Date?, hkEnd: Date?) {
+        lastHeartRateBpm = bpm
+        let now = ProcessInfo.processInfo.systemUptime
+        let bpmChanged = lastHeartRateSentBpm.map { abs($0 - bpm) >= 1 } ?? true
+        let intervalOk = now - lastHeartRateSentAt >= heartRateMinInterval
+        guard bpmChanged || intervalOk else { return }
+
+        let watchTime = WatchTime.now()
+        let offset = clockSync.offsetSeconds ?? 0
+        let phoneSeconds = watchTime.seconds + offset
+        let event = HeartRateEvent(
+            bpm: bpm,
+            watchTimestamp: watchTime.seconds,
+            phoneTimestamp: phoneSeconds,
+            hkStart: hkStart?.timeIntervalSinceReferenceDate,
+            hkEnd: hkEnd?.timeIntervalSinceReferenceDate,
+            source: "workoutBuilder"
+        )
+        sendOrTransfer(WatchOutboundMessage.heartRate(event))
+        lastHeartRateSentAt = now
+        lastHeartRateSentBpm = bpm
+        if !isCalibrating, statusText == "Armed" || statusText.hasPrefix("HR") || statusText.hasPrefix("sync") {
+            statusText = String(format: "HR %.0f bpm", bpm)
+        }
+    }
+
     private func sendOrTransfer(_ payload: [String: Any]) {
         if transport.isReachable {
             transport.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
@@ -281,6 +338,10 @@ final class WatchSessionManager: NSObject {
             startLiveDirectionStream()
         case .liveDirectionStop:
             stopLiveDirectionStream()
+        case .motionEnergyStart:
+            startMotionEnergyStream()
+        case .motionEnergyStop:
+            stopMotionEnergyStream()
         }
     }
 }

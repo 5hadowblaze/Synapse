@@ -1,0 +1,13 @@
+---
+description: Treat docs/MASTER.md as Synapse canonical source of truth before planning or coding
+alwaysApply: true
+---
+
+# Synapse — MASTER.md is source of truth
+
+Before planning or coding on Synapse, read [`docs/MASTER.md`](docs/MASTER.md). It is the single source of truth for product, architecture, ship status, build plan, demos, keys, and checklists.
+
+- **Product:** Synapse Focus — health-aware Pomodoro / deep-work companion. Sensor fusion (phone vision + Watch IMU + HR) is the tech moat, not the cold-open pitch.
+- **Priorities:** Follow the build plan and ship status in MASTER. Do not reinvent the pitch or reposition the product.
+- **Schema:** Collection/field details stay in [`docs/SCHEMA.md`](docs/SCHEMA.md); MASTER owns the narrative and plan.
+- **Canvases:** Visual companions (e.g. `synapse-master-overview.canvas.tsx`) are secondary — never override MASTER.md.

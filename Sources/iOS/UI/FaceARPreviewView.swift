@@ -12,6 +12,10 @@ struct FaceARPreviewView: UIViewRepresentable {
     /// When set, draws Vision arm joints / bones as a white wireframe net (matches face mesh).
     var armJoints: [FrontArmEstimator.OverlayJoint] = []
     var armBones: [(CGPoint, CGPoint)] = []
+    /// Face mesh line opacity (0 hides mesh + gaze ray).
+    var faceMeshOpacity: CGFloat = 0.85
+    var showGazeRay: Bool = true
+    var showTrackingRing: Bool = true
     /// Called once after the view attaches so FaceTracker can refresh face anchors.
     var onAttached: (() -> Void)? = nil
 
@@ -23,6 +27,9 @@ struct FaceARPreviewView: UIViewRepresentable {
         let view = ARSCNView(frame: .zero)
         view.delegate = context.coordinator
         context.coordinator.view = view
+        context.coordinator.faceMeshOpacity = faceMeshOpacity
+        context.coordinator.showGazeRay = showGazeRay
+        context.coordinator.showTrackingRing = showTrackingRing
         view.automaticallyUpdatesLighting = true
         view.autoenablesDefaultLighting = true
         view.scene = SCNScene()
@@ -46,6 +53,10 @@ struct FaceARPreviewView: UIViewRepresentable {
                 onAttached?()
             }
         }
+        context.coordinator.faceMeshOpacity = faceMeshOpacity
+        context.coordinator.showGazeRay = showGazeRay
+        context.coordinator.showTrackingRing = showTrackingRing
+        context.coordinator.applyAppearance()
         context.coordinator.setTracked(isTracked)
         context.coordinator.handleSaccadeFlash(token: saccadeFlashToken)
         context.coordinator.updateArmOverlay(
@@ -75,6 +86,9 @@ struct FaceARPreviewView: UIViewRepresentable {
         private var ringLayer: CAShapeLayer?
         private var armLayer: CAShapeLayer?
         private var lastFlashToken = 0
+        var faceMeshOpacity: CGFloat = 0.85
+        var showGazeRay: Bool = true
+        var showTrackingRing: Bool = true
 
         /// Matches `ARSCNFaceGeometry` wireframe: white lines @ ~0.85 alpha.
         private static let armWireColor = UIColor.white.withAlphaComponent(0.85)
@@ -97,10 +111,21 @@ struct FaceARPreviewView: UIViewRepresentable {
             view.layer.addSublayer(arm)
             armLayer = arm
 
+            applyAppearance()
             DispatchQueue.main.async { [weak self, weak view] in
                 guard let self, let view else { return }
                 self.layoutRing(in: view.bounds)
             }
+        }
+
+        func applyAppearance() {
+            ringLayer?.isHidden = !showTrackingRing
+            let opacity = max(0, min(1, faceMeshOpacity))
+            if let geo = faceNode?.geometry as? ARSCNFaceGeometry {
+                geo.firstMaterial?.diffuse.contents = UIColor.white.withAlphaComponent(opacity)
+                faceNode?.isHidden = opacity < 0.01
+            }
+            gazeRayNode?.isHidden = !showGazeRay || opacity < 0.01
         }
 
         func layoutRing(in bounds: CGRect) {
@@ -221,13 +246,15 @@ struct FaceARPreviewView: UIViewRepresentable {
             else { return nil }
 
             geometry.firstMaterial?.fillMode = .lines
-            geometry.firstMaterial?.diffuse.contents = UIColor.white.withAlphaComponent(0.85)
+            geometry.firstMaterial?.diffuse.contents = UIColor.white.withAlphaComponent(faceMeshOpacity)
             geometry.firstMaterial?.lightingModel = .physicallyBased
 
             let node = SCNNode(geometry: geometry)
+            node.isHidden = faceMeshOpacity < 0.01
             faceNode = node
 
             let ray = makeGazeRayNode()
+            ray.isHidden = !showGazeRay || faceMeshOpacity < 0.01
             node.addChildNode(ray)
             gazeRayNode = ray
             updateGazeRay(on: ray, face: faceAnchor)

@@ -24,6 +24,16 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Synapse uses the front camera for TrueDepth face tracking and arm-direction preview during Kinetic Clock.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Synapse uses the microphone so the floating voice assistant can hear your commands.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Synapse converts your speech on-device so the voice assistant can navigate and coach sessions.</string>
+	<key>OPENAI_API_KEY</key>
+	<string></string>
+	<key>ELEVENLABS_API_KEY</key>
+	<string></string>
+	<key>ELEVENLABS_VOICE_ID</key>
+	<string></string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

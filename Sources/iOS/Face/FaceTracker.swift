@@ -18,6 +18,8 @@ final class FaceTracker: NSObject {
     /// Face-space look-at and mid-eye for preview / mapper (updated each tracked frame).
     var latestLookAt = SIMD3<Float>(0, 0, -1)
     var latestMidEye = SIMD3<Float>(0, 0, 0)
+    /// Face anchor translation in camera space (meters) — used for Batak clock parallax.
+    var facePositionCamera: SIMD3<Float>?
     /// Approximate camera-to-face distance in meters from face transform translation.
     var estimatedDistanceMeters: Float?
     var eyeBlink: Float = 0
@@ -35,6 +37,8 @@ final class FaceTracker: NSObject {
     var armJoints: [FrontArmEstimator.OverlayJoint] = []
     var armBones: [(CGPoint, CGPoint)] = []
     var onArmOctant: ((Int?) -> Void)?
+    /// Which athlete arm to draw / use for octant (default right).
+    private(set) var preferredArmSide: KineticArmSide = .right
 
     private let saccadeDetector = SaccadeDetector()
     private let arousalIndexer = ArousalIndexer()
@@ -88,6 +92,7 @@ final class FaceTracker: NSObject {
         session.pause()
         isSessionRunning = false
         isTracking = false
+        facePositionCamera = nil
         estimatedDistanceMeters = nil
         clearArmState()
         statusText = "Face tracking stopped"
@@ -98,6 +103,13 @@ final class FaceTracker: NSObject {
         if !enabled {
             clearArmState()
         } else {
+            armStatusText = "Arm: seeking"
+        }
+    }
+
+    func setPreferredArmSide(_ side: KineticArmSide) {
+        preferredArmSide = side
+        if armPoseEnabled {
             armStatusText = "Arm: seeking"
         }
     }
@@ -163,6 +175,9 @@ extension FaceTracker: ARSessionDelegate {
             self.latestGaze = sample
             self.latestLookAt = sample.lookAt
             self.latestMidEye = midEye
+            self.facePositionCamera = face.isTracked
+                ? SIMD3<Float>(translation.x, translation.y, translation.z)
+                : nil
             self.estimatedDistanceMeters = face.isTracked ? distance : nil
             self.eyeBlink = max(blinkL, blinkR)
             self.eyeWide = sample.eyeWide
@@ -190,7 +205,8 @@ extension FaceTracker: ARSessionDelegate {
         Task { @MainActor in
             guard self.armPoseEnabled else { return }
             let buffer = frame.capturedImage
-            self.armEstimator.process(pixelBuffer: buffer, orientation: .right) { [weak self] result in
+            let side = self.preferredArmSide
+            self.armEstimator.process(pixelBuffer: buffer, orientation: .right, side: side) { [weak self] result in
                 Task { @MainActor in
                     self?.ingestArm(result)
                 }
@@ -203,6 +219,7 @@ extension FaceTracker: ARSessionDelegate {
             self.statusText = "ARSession error: \(error.localizedDescription)"
             self.isTracking = false
             self.isSessionRunning = false
+            self.facePositionCamera = nil
             self.estimatedDistanceMeters = nil
         }
     }

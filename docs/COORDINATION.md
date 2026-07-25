@@ -1,18 +1,9 @@
-# Coordination — web agent note
+# Coordination
 
-Firebase root files owned/created by the web dashboard agent:
+**Canonical ownership + agent rules:** [`MASTER.md`](MASTER.md) §9.
 
-- `firebase.json`
-- `firestore.rules`
-- `.firebaserc`
-- `docs/SCHEMA.md`
-- `web/**`
-- `Docs/PITCH_CHECKLIST.md`
+- **Native agent:** `project.yml`, `Sources/**`, phone Firebase plist + SPM.
+- **Web agent:** `web/**`, `firebase.json`, `firestore.rules`, `.firebaserc`.
+- **Shared contract:** [`SCHEMA.md`](SCHEMA.md). Product/plan: MASTER.
 
-iOS / watch agent owns:
-
-- `project.yml`, Xcode project, `Sources/**`
-- `GoogleService-Info.plist` (iOS target only)
-- Firebase SPM on the phone app
-
-If both sides touch root README, merge additively. Do not delete the other side's scaffold.
+Do not delete the other side’s scaffold; merge README additively if both touch it.

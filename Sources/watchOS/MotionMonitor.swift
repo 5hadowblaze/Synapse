@@ -32,6 +32,11 @@ final class MotionMonitor: @unchecked Sendable {
     private var calibrated = false
     private var running = false
     private var streamingLiveDirection = false
+    private var streamingMotionEnergy = false
+    private var energySumSquares = 0.0
+    private var energySampleCount = 0
+    private var lastEnergySendUptime: TimeInterval = 0
+    private let motionEnergyMinInterval: TimeInterval = 1.0
     private var lastLiveOctantSent: Int?
     private var lastLiveSendUptime: TimeInterval = 0
     private let liveDirectionMinInterval: TimeInterval = 0.1
@@ -42,6 +47,8 @@ final class MotionMonitor: @unchecked Sendable {
     /// `(watchTime, peakG, detectedOctant?)`
     var onStrike: (@MainActor (WatchTime, Double, Int?) -> Void)?
     var onLiveDirection: (@MainActor (Int) -> Void)?
+    /// Normalized motion energy ~0…1 (RMS of user accel over 1s window).
+    var onMotionEnergy: (@MainActor (Double) -> Void)?
     /// Fired when calibration window closes (success or failure).
     var onCalibrationFinished: (@MainActor (Bool) -> Void)?
 
@@ -53,6 +60,19 @@ final class MotionMonitor: @unchecked Sendable {
     var isStreamingLiveDirection: Bool {
         get { lock.withLock { streamingLiveDirection } }
         set { lock.withLock { streamingLiveDirection = newValue } }
+    }
+
+    var isStreamingMotionEnergy: Bool {
+        get { lock.withLock { streamingMotionEnergy } }
+        set {
+            lock.withLock {
+                streamingMotionEnergy = newValue
+                if !newValue {
+                    energySumSquares = 0
+                    energySampleCount = 0
+                }
+            }
+        }
     }
 
     init(motionManager: CMMotionManager = CMMotionManager()) {
@@ -77,6 +97,9 @@ final class MotionMonitor: @unchecked Sendable {
             running = false
             calibrating = false
             streamingLiveDirection = false
+            streamingMotionEnergy = false
+            energySumSquares = 0
+            energySampleCount = 0
             lastLiveOctantSent = nil
             calibrationDeadline = nil
         }
@@ -124,6 +147,7 @@ final class MotionMonitor: @unchecked Sendable {
             }
         }
         let streaming = streamingLiveDirection
+        let streamingEnergy = streamingMotionEnergy
         let isCalib = calibrated
         let cls = classifier
         let mirror = mirrorLateralOverride ?? (WKInterfaceDevice.current().wristLocation == .left)
@@ -131,6 +155,29 @@ final class MotionMonitor: @unchecked Sendable {
 
         if shouldFinishCalibration {
             finishCalibrationIfNeeded(force: true)
+        }
+
+        if streamingEnergy {
+            let mag = sqrt(ua.x * ua.x + ua.y * ua.y + ua.z * ua.z)
+            var energyToSend: Double?
+            lock.lock()
+            energySumSquares += mag * mag
+            energySampleCount += 1
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastEnergySendUptime >= motionEnergyMinInterval, energySampleCount > 0 {
+                let rms = sqrt(energySumSquares / Double(energySampleCount))
+                // ~0.05g quiet desk → ~0; ~0.4g fidgeting → ~1
+                energyToSend = min(1.0, max(0.0, (rms - 0.02) / 0.35))
+                energySumSquares = 0
+                energySampleCount = 0
+                lastEnergySendUptime = now
+            }
+            lock.unlock()
+            if let energyToSend {
+                Task { @MainActor in
+                    self.onMotionEnergy?(energyToSend)
+                }
+            }
         }
 
         if streaming, isCalib, let cls {
@@ -162,8 +209,8 @@ final class MotionMonitor: @unchecked Sendable {
             }
         }
 
-        // No strike scoring while gathering calibration samples.
-        let skipStrikes = lock.withLock { calibrating }
+        // No strike scoring while gathering calibration samples or streaming Focus energy.
+        let skipStrikes = lock.withLock { calibrating || streamingMotionEnergy }
         guard !skipStrikes else { return }
 
         let peakG = sqrt(ua.x * ua.x + ua.y * ua.y + ua.z * ua.z)

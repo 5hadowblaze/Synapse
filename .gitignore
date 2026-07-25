@@ -15,3 +15,7 @@ DerivedData/
 .firebase/
 # Firebase iOS config (download from Console — never commit real keys)
 Sources/iOS/GoogleService-Info.plist
+# Voice API keys (copy VoiceSecrets.plist.example → VoiceSecrets.plist)
+Sources/iOS/Voice/VoiceSecrets.plist
+Sources/iOS/VoiceSecrets.plist
+*.local.xcconfig

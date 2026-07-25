@@ -16,6 +16,11 @@ export interface Session {
   baselineGapMs: number | null
   baselineStdMs: number | null
   breakPointTrial: number | null
+  /** Discrete Watch workout HR — not frame-locked to camera. */
+  lastHeartRateBpm: number | null
+  lastHeartRatePhoneMs: number | null
+  lastHeartRateWatchMs: number | null
+  lastHeartRateSource: string | null
 }
 
 export interface Trial {

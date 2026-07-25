@@ -67,6 +67,13 @@ function parseSession(id: string, data: Record<string, unknown>): Session {
     baselineGapMs: asNullableNumber(data.baselineGapMs),
     baselineStdMs: asNullableNumber(data.baselineStdMs),
     breakPointTrial: asNullableNumber(data.breakPointTrial),
+    lastHeartRateBpm: asNullableNumber(data.lastHeartRateBpm),
+    lastHeartRatePhoneMs: asNullableNumber(data.lastHeartRatePhoneMs),
+    lastHeartRateWatchMs: asNullableNumber(data.lastHeartRateWatchMs),
+    lastHeartRateSource:
+      typeof data.lastHeartRateSource === 'string'
+        ? data.lastHeartRateSource
+        : null,
   }
 }
 

@@ -10,6 +10,11 @@ final class PhoneSessionManager: NSObject {
     var lastSyncRttMs: Double?
     var lastStrike: StrikeEvent?
     var statusText = "Watch: idle"
+    /// Latest Watch workout heart rate (BPM).
+    var lastHeartRateBpm: Double?
+    var lastHeartRateEvent: HeartRateEvent?
+    /// Latest Focus stillness energy (0…1).
+    var lastMotionEnergy: Double?
 
     var onStrike: ((StrikeEvent) -> Void)?
     var onSyncQuality: ((Double, Double) -> Void)?
@@ -17,6 +22,8 @@ final class PhoneSessionManager: NSObject {
     var onLiveDirection: ((Int) -> Void)?
     /// Watch finished IMU calibration (`success` from Watch ACK).
     var onCalibrateResult: ((Bool) -> Void)?
+    var onHeartRate: ((HeartRateEvent) -> Void)?
+    var onMotionEnergy: ((Double) -> Void)?
     var lastLiveOctant: Int?
     var lastCalibrateSuccess: Bool?
 
@@ -94,6 +101,26 @@ final class PhoneSessionManager: NSObject {
         }
     }
 
+    func sendMotionEnergyStart() {
+        let payload: [String: Any] = [WCMessageKey.type: WCMessageKey.motionEnergyStart]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+            statusText = "Watch stillness…"
+        } else {
+            session.transferUserInfo(payload)
+            statusText = "Stillness queued"
+        }
+    }
+
+    func sendMotionEnergyStop() {
+        let payload: [String: Any] = [WCMessageKey.type: WCMessageKey.motionEnergyStop]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+        } else {
+            session.transferUserInfo(payload)
+        }
+    }
+
     private func handleSyncPing(_ message: [String: Any], replyHandler: (([String: Any]) -> Void)?) {
         guard let t1 = message[WCMessageKey.t1] as? Double else { return }
         let t2 = PhoneTime.now().seconds
@@ -159,6 +186,28 @@ final class PhoneSessionManager: NSObject {
         statusText = success ? "Watch calibrated" : "Watch calibrate failed"
         onCalibrateResult?(success)
     }
+
+    private func handleHeartRate(_ message: [String: Any]) {
+        guard let event = HeartRateEvent.from(message: message) else { return }
+        lastHeartRateEvent = event
+        lastHeartRateBpm = event.bpm
+        statusText = String(format: "HR %.0f bpm", event.bpm)
+        onHeartRate?(event)
+    }
+
+    private func handleMotionEnergy(_ message: [String: Any]) {
+        let energy: Double?
+        if let d = message[WCMessageKey.energy] as? Double {
+            energy = d
+        } else if let n = message[WCMessageKey.energy] as? NSNumber {
+            energy = n.doubleValue
+        } else {
+            energy = nil
+        }
+        guard let energy else { return }
+        lastMotionEnergy = energy
+        onMotionEnergy?(energy)
+    }
 }
 
 extension PhoneSessionManager: WCSessionDelegate {
@@ -203,6 +252,10 @@ extension PhoneSessionManager: WCSessionDelegate {
                 handleSyncQuality(message)
             case WCMessageKey.calibrateResult:
                 handleCalibrateResult(message)
+            case WCMessageKey.heartRate:
+                handleHeartRate(message)
+            case WCMessageKey.motionEnergy:
+                handleMotionEnergy(message)
             default:
                 break
             }
@@ -228,6 +281,12 @@ extension PhoneSessionManager: WCSessionDelegate {
             case WCMessageKey.liveDirection:
                 handleLiveDirection(message)
                 replyHandler([WCMessageKey.type: "ack"])
+            case WCMessageKey.heartRate:
+                handleHeartRate(message)
+                replyHandler([WCMessageKey.type: "ack"])
+            case WCMessageKey.motionEnergy:
+                handleMotionEnergy(message)
+                replyHandler([WCMessageKey.type: "ack"])
             default:
                 replyHandler([:])
             }
@@ -246,6 +305,10 @@ extension PhoneSessionManager: WCSessionDelegate {
                 handleSyncQuality(userInfo)
             case WCMessageKey.calibrateResult:
                 handleCalibrateResult(userInfo)
+            case WCMessageKey.heartRate:
+                handleHeartRate(userInfo)
+            case WCMessageKey.motionEnergy:
+                handleMotionEnergy(userInfo)
             default:
                 break
             }

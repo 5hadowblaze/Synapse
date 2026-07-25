@@ -46,6 +46,10 @@ function baseSession(
     baselineGapMs: null,
     baselineStdMs: null,
     breakPointTrial: null,
+    lastHeartRateBpm: 72,
+    lastHeartRatePhoneMs: null,
+    lastHeartRateWatchMs: null,
+    lastHeartRateSource: 'demo',
     ...extras,
   }
 }

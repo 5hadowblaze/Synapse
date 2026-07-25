@@ -45,6 +45,14 @@ final class WCMessageContractTests: XCTestCase {
             .liveDirectionStop
         )
         XCTAssertEqual(
+            WatchInboundCommand.parse([WCMessageKey.type: WCMessageKey.motionEnergyStart]),
+            .motionEnergyStart
+        )
+        XCTAssertEqual(
+            WatchInboundCommand.parse([WCMessageKey.type: WCMessageKey.motionEnergyStop]),
+            .motionEnergyStop
+        )
+        XCTAssertEqual(
             WatchInboundCommand.parse([WCMessageKey.type: WCMessageKey.calibrateStop]),
             .calibrateStop
         )

@@ -23,7 +23,7 @@ final class KineticClockEngineTests: XCTestCase {
         )
         engine.ingestStrike(event)
 
-        XCTAssertEqual(completed?.motorRtMs, 250, accuracy: 1e-6) // 350 - 100
+        XCTAssertEqual(completed?.motorRtMs ?? -1, 250, accuracy: 1e-6) // 350 - 100
         XCTAssertEqual(completed?.spatialMatch, true)
         XCTAssertEqual(completed?.detectedOctant, 2)
         XCTAssertEqual(completed?.peakG, 4.5)
@@ -53,7 +53,7 @@ final class KineticClockEngineTests: XCTestCase {
 
         XCTAssertEqual(completed?.spatialMatch, false)
         XCTAssertEqual(completed?.valid, true)
-        XCTAssertEqual(completed?.motorRtMs, 150, accuracy: 1e-6)
+        XCTAssertEqual(completed?.motorRtMs ?? -1, 150, accuracy: 1e-6)
     }
 
     func testIngestStrikeIgnoredOutsideAwaitingResponse() {

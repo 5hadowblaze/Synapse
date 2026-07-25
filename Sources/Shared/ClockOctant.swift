@@ -43,4 +43,6 @@ enum ClockOctant: Int, CaseIterable, Codable, Sendable, Equatable {
 enum SessionModule: String, Codable, Sendable, Equatable {
     case kineticClock
     case visionPvt
+    /// Desk Focus (health-aware Pomodoro) — face arousal + Watch HR, not PVT/Kinetic trials.
+    case focusDesk
 }

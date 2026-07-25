@@ -3,8 +3,36 @@ import Foundation
 import QuartzCore
 import Vision
 
+/// Athlete's left or right arm for Kinetic overlay + pointing (person-relative, Vision chirality).
+enum KineticArmSide: String, CaseIterable, Sendable {
+    case left
+    case right
+
+    var label: String {
+        switch self {
+        case .left: return "Left arm"
+        case .right: return "Right arm"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .left: return "Left"
+        case .right: return "Right"
+        }
+    }
+
+    var jointPrefix: String {
+        switch self {
+        case .left: return "L"
+        case .right: return "R"
+        }
+    }
+}
+
 /// Front-camera arm / hand direction from Vision pose on AR face frames.
 /// Maps wrist vs shoulders (or hand tip) into the same 8 `ClockOctant`s as the Kinetic clock.
+/// Only the selected arm is drawn and used for octant — never both.
 final class FrontArmEstimator: @unchecked Sendable {
     struct OverlayJoint: Sendable {
         let name: String
@@ -33,6 +61,7 @@ final class FrontArmEstimator: @unchecked Sendable {
     func process(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .right,
+        side: KineticArmSide = .right,
         completion: @escaping (Result) -> Void
     ) {
         let now = CACurrentMediaTime()
@@ -56,7 +85,8 @@ final class FrontArmEstimator: @unchecked Sendable {
 
             let result = Self.estimate(
                 body: bodyRequest.results?.first,
-                hands: handRequest.results ?? []
+                hands: handRequest.results ?? [],
+                side: side
             )
             completion(result)
         }
@@ -64,10 +94,13 @@ final class FrontArmEstimator: @unchecked Sendable {
 
     private static func estimate(
         body: VNHumanBodyPoseObservation?,
-        hands: [VNHumanHandPoseObservation]
+        hands: [VNHumanHandPoseObservation],
+        side: KineticArmSide
     ) -> Result {
         var joints: [OverlayJoint] = []
         var bones: [(CGPoint, CGPoint)] = []
+        let wantLeft = side == .left
+        let prefix = side.jointPrefix
 
         func mirrored(_ p: CGPoint) -> CGPoint {
             // Vision: origin bottom-left → UI top-left, then mirror X for selfie preview.
@@ -79,7 +112,7 @@ final class FrontArmEstimator: @unchecked Sendable {
             joints.append(OverlayJoint(name: name, point: mirrored(point)))
         }
 
-        // Prefer body pose shoulders → wrists.
+        // Prefer body pose shoulders → wrists (selected side only).
         var leftShoulder: CGPoint?
         var rightShoulder: CGPoint?
         var leftElbow: CGPoint?
@@ -94,18 +127,41 @@ final class FrontArmEstimator: @unchecked Sendable {
                 guard let p = try? body.recognizedPoint(joint), p.confidence > 0.15 else { return nil }
                 return (p.location, p.confidence)
             }
-            if let s = pt(.leftShoulder) { leftShoulder = s.0; addJoint("LSh", s.0, confidence: s.1) }
-            if let s = pt(.rightShoulder) { rightShoulder = s.0; addJoint("RSh", s.0, confidence: s.1) }
-            if let e = pt(.leftElbow) { leftElbow = e.0; addJoint("LEl", e.0, confidence: e.1) }
-            if let e = pt(.rightElbow) { rightElbow = e.0; addJoint("REl", e.0, confidence: e.1) }
-            if let w = pt(.leftWrist) { leftWrist = w.0; leftConf = w.1; addJoint("LWr", w.0, confidence: w.1) }
-            if let w = pt(.rightWrist) { rightWrist = w.0; rightConf = w.1; addJoint("RWr", w.0, confidence: w.1) }
+            // Always read both wrists for hand chirality matching; only draw selected side.
+            if let s = pt(.leftShoulder) {
+                leftShoulder = s.0
+                if wantLeft { addJoint("LSh", s.0, confidence: s.1) }
+            }
+            if let s = pt(.rightShoulder) {
+                rightShoulder = s.0
+                if !wantLeft { addJoint("RSh", s.0, confidence: s.1) }
+            }
+            if let e = pt(.leftElbow) {
+                leftElbow = e.0
+                if wantLeft { addJoint("LEl", e.0, confidence: e.1) }
+            }
+            if let e = pt(.rightElbow) {
+                rightElbow = e.0
+                if !wantLeft { addJoint("REl", e.0, confidence: e.1) }
+            }
+            if let w = pt(.leftWrist) {
+                leftWrist = w.0
+                leftConf = w.1
+                if wantLeft { addJoint("LWr", w.0, confidence: w.1) }
+            }
+            if let w = pt(.rightWrist) {
+                rightWrist = w.0
+                rightConf = w.1
+                if !wantLeft { addJoint("RWr", w.0, confidence: w.1) }
+            }
 
-            if let a = leftShoulder, let b = leftElbow { bones.append((mirrored(a), mirrored(b))) }
-            if let a = leftElbow, let b = leftWrist { bones.append((mirrored(a), mirrored(b))) }
-            if let a = rightShoulder, let b = rightElbow { bones.append((mirrored(a), mirrored(b))) }
-            if let a = rightElbow, let b = rightWrist { bones.append((mirrored(a), mirrored(b))) }
-            if let a = leftShoulder, let b = rightShoulder { bones.append((mirrored(a), mirrored(b))) }
+            if wantLeft {
+                if let a = leftShoulder, let b = leftElbow { bones.append((mirrored(a), mirrored(b))) }
+                if let a = leftElbow, let b = leftWrist { bones.append((mirrored(a), mirrored(b))) }
+            } else {
+                if let a = rightShoulder, let b = rightElbow { bones.append((mirrored(a), mirrored(b))) }
+                if let a = rightElbow, let b = rightWrist { bones.append((mirrored(a), mirrored(b))) }
+            }
         }
 
         // Hand tips as optional extension beyond wrist; also densify overlay with finger chains.
@@ -133,7 +189,8 @@ final class FrontArmEstimator: @unchecked Sendable {
             let distL = leftWrist.map { hypot($0.x - w.x, $0.y - w.y) } ?? .greatestFiniteMagnitude
             let distR = rightWrist.map { hypot($0.x - w.x, $0.y - w.y) } ?? .greatestFiniteMagnitude
             let isLeft = distL <= distR
-            let prefix = isLeft ? "L" : "R"
+            guard isLeft == wantLeft else { continue }
+
             if isLeft {
                 leftTip = bestTip?.0 ?? leftTip
                 if leftWrist == nil {
@@ -166,16 +223,7 @@ final class FrontArmEstimator: @unchecked Sendable {
             }
         }
 
-        let midShoulder: CGPoint? = {
-            switch (leftShoulder, rightShoulder) {
-            case let (l?, r?): return CGPoint(x: (l.x + r.x) / 2, y: (l.y + r.y) / 2)
-            case let (l?, nil): return l
-            case let (nil, r?): return r
-            default: return nil
-            }
-        }()
-
-        // Pick the more extended / confident arm (tip preferred over wrist).
+        // Pointing uses only the selected arm (ignore the other side's tip / wrist).
         struct Candidate {
             let origin: CGPoint
             let tip: CGPoint
@@ -192,18 +240,26 @@ final class FrontArmEstimator: @unchecked Sendable {
             candidates.append(Candidate(origin: origin, tip: tip, score: len * CGFloat(conf)))
         }
 
-        let leftOrigin = midShoulder ?? leftShoulder ?? leftElbow
-        let rightOrigin = midShoulder ?? rightShoulder ?? rightElbow
-        consider(origin: leftOrigin, tip: leftTip ?? leftWrist, conf: leftConf)
-        consider(origin: rightOrigin, tip: rightTip ?? rightWrist, conf: rightConf)
+        if wantLeft {
+            let origin = leftShoulder ?? leftElbow
+            consider(origin: origin, tip: leftTip ?? leftWrist, conf: leftConf)
+        } else {
+            let origin = rightShoulder ?? rightElbow
+            consider(origin: origin, tip: rightTip ?? rightWrist, conf: rightConf)
+        }
 
-        // Hand-only fallback: use wrist → tip with image center as origin substitute.
+        // Hand-only fallback: selected-side wrist → tip only.
         if candidates.isEmpty {
             for hand in hands {
                 guard let wrist = try? hand.recognizedPoint(.wrist), wrist.confidence > 0.25,
                       let tip = try? hand.recognizedPoint(.indexTip), tip.confidence > 0.2
                 else { continue }
-                consider(origin: wrist.location, tip: tip.location, conf: min(wrist.confidence, tip.confidence))
+                let w = wrist.location
+                let distL = leftWrist.map { hypot($0.x - w.x, $0.y - w.y) } ?? .greatestFiniteMagnitude
+                let distR = rightWrist.map { hypot($0.x - w.x, $0.y - w.y) } ?? .greatestFiniteMagnitude
+                let isLeft = distL <= distR
+                guard isLeft == wantLeft else { continue }
+                consider(origin: w, tip: tip.location, conf: min(wrist.confidence, tip.confidence))
             }
         }
 
@@ -233,7 +289,7 @@ final class FrontArmEstimator: @unchecked Sendable {
             joints: joints,
             bones: bones,
             isTracking: true,
-            statusText: "Arm · \(ClockOctant(rawValue: octant)?.label ?? "?")"
+            statusText: "\(side.shortLabel) · \(ClockOctant(rawValue: octant)?.label ?? "?")"
         )
     }
 }

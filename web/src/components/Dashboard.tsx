@@ -160,11 +160,20 @@ export function Dashboard() {
                 sub="strike peak accel"
               />
               <MetricTile
-                label="Trials"
-                value={String(trials.length)}
-                unit=""
+                label="Watch HR"
+                value={
+                  session?.lastHeartRateBpm != null &&
+                  Number.isFinite(session.lastHeartRateBpm)
+                    ? Math.round(session.lastHeartRateBpm).toString()
+                    : '—'
+                }
+                unit="bpm"
                 accent="muted"
-                sub={session ? `${session.status} · ${session.athleteId}` : '—'}
+                sub={
+                  session?.lastHeartRateSource
+                    ? `workout · ${session.lastHeartRateSource}`
+                    : 'Series 5 discrete sample'
+                }
               />
             </>
           ) : (
@@ -201,11 +210,16 @@ export function Dashboard() {
                 sub="settle − target"
               />
               <MetricTile
-                label="Trials"
-                value={String(trials.length)}
-                unit=""
+                label="Watch HR"
+                value={
+                  session?.lastHeartRateBpm != null &&
+                  Number.isFinite(session.lastHeartRateBpm)
+                    ? Math.round(session.lastHeartRateBpm).toString()
+                    : '—'
+                }
+                unit="bpm"
                 accent="muted"
-                sub={session ? `${session.status} · ${session.athleteId}` : '—'}
+                sub="session latest (if Watch paired)"
               />
             </>
           )}

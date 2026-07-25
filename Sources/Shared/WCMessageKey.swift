@@ -11,6 +11,9 @@ enum WCMessageKey {
     static let liveDirection = "liveDirection"
     static let syncQuality = "syncQuality"
     static let calibrateResult = "calibrateResult"
+    static let heartRate = "heartRate"
+    /// Low-rate wrist motion energy (0…1-ish RMS) during Focus stillness stream.
+    static let motionEnergy = "motionEnergy"
 
     // Phone → Watch
     static let syncPong = "syncPong"
@@ -19,6 +22,8 @@ enum WCMessageKey {
     static let calibrateStop = "calibrateStop"
     static let liveDirectionStart = "liveDirectionStart"
     static let liveDirectionStop = "liveDirectionStop"
+    static let motionEnergyStart = "motionEnergyStart"
+    static let motionEnergyStop = "motionEnergyStop"
 
     // Fields
     static let t1 = "t1"
@@ -32,4 +37,9 @@ enum WCMessageKey {
     static let success = "success"
     static let offsetMs = "offsetMs"
     static let rttMs = "rttMs"
+    static let bpm = "bpm"
+    static let hkStart = "hkStart"
+    static let hkEnd = "hkEnd"
+    static let hrSource = "hrSource"
+    static let energy = "energy"
 }
