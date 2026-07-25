@@ -10,6 +10,7 @@ struct CannedSession: Sendable {
     /// Matches web default / seed: `demo-session-001`.
     let sessionId: String
     let athleteId: String
+    let module: SessionModule
     let clockOffsetMs: Double
     let clockRttMs: Double
     let baselineGapMs: Double
@@ -19,7 +20,7 @@ struct CannedSession: Sendable {
 }
 
 enum CannedSessionFactory {
-    /// Synthetic demo session with a clear fatigue break-point after baseline.
+    /// Synthetic demo session (vision-style visual RT break-point) for dashboard smoke.
     static func makeDemo() -> CannedSession {
         var trials: [CannedTrial] = []
         let baselineMean = 180.0
@@ -27,32 +28,32 @@ enum CannedSessionFactory {
 
         for i in 0..<16 {
             let targetOnset = Double(i) * 2000.0 + 500
-            let visualRt = 120.0 + Double.random(in: -10...10)
-            let gap: Double
+            let visualRt: Double
             if i < 10 {
-                gap = baselineMean + Double.random(in: -baselineStd...baselineStd)
+                visualRt = baselineMean + Double.random(in: -baselineStd...baselineStd)
             } else if i == 12 {
-                gap = baselineMean + 2.5 * baselineStd
+                visualRt = baselineMean + 2.5 * baselineStd
             } else {
-                gap = baselineMean + Double.random(in: 0...1.5) * baselineStd
+                visualRt = baselineMean + Double.random(in: 0...1.5) * baselineStd
             }
             let saccade = targetOnset + visualRt
-            let strike = saccade + gap
-            let cell = i % 9
             let trial = TrialRecord(
                 index: i,
-                targetCell: cell,
+                targetCell: 4,
                 targetOnsetMs: targetOnset,
                 saccadeOnsetMs: saccade,
                 gazeSettleMs: saccade + 40,
-                strikeMs: strike,
+                strikeMs: nil,
                 visualRtMs: visualRt,
-                motorRtMs: strike - targetOnset,
-                cognitiveMotorGapMs: gap,
-                peakG: 4.5 + Double.random(in: -0.5...1.5),
+                motorRtMs: nil,
+                cognitiveMotorGapMs: nil,
+                peakG: nil,
                 arousalIndex: Float.random(in: 0.2...0.8),
                 valid: true,
-                invalidReason: nil
+                invalidReason: nil,
+                targetOctant: nil,
+                detectedOctant: nil,
+                spatialMatch: nil
             )
             let t0 = targetOnset - 200
             var gaze: [GazeWindowSample] = []
@@ -71,6 +72,7 @@ enum CannedSessionFactory {
         return CannedSession(
             sessionId: SynapseSessionIDs.demo,
             athleteId: "athlete-demo",
+            module: .visionPvt,
             clockOffsetMs: 12.4,
             clockRttMs: 38.0,
             baselineGapMs: baselineMean,

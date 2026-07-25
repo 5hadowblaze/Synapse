@@ -9,6 +9,8 @@ final class WatchSessionManager: NSObject {
     var statusText = "Idle"
     var lastOffsetMs: Double?
     var lastRttMs: Double?
+    var lastDetectedOctant: Int?
+    var isCalibrating = false
 
     let clockSync = ClockSyncClient()
     let motion = MotionMonitor()
@@ -33,9 +35,35 @@ final class WatchSessionManager: NSObject {
             self?.statusText = String(format: "sync RTT %.0fms", sample.rttMs)
             self?.reportSyncQuality(sample)
         }
-        motion.onStrike = { [weak self] watchTime, peakG in
-            self?.sendStrike(watchTime: watchTime, peakG: peakG)
+        motion.onStrike = { [weak self] watchTime, peakG, octant in
+            self?.sendStrike(watchTime: watchTime, peakG: peakG, detectedOctant: octant)
         }
+        motion.onLiveDirection = { [weak self] octant in
+            self?.sendLiveDirection(octant)
+        }
+    }
+
+    func beginCalibration(durationSeconds: Double = 10) {
+        isCalibrating = true
+        motion.startCalibration(durationSeconds: durationSeconds)
+        statusText = "Calibrating…"
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(durationSeconds * 1_000_000_000))
+            self.motion.stopCalibration()
+            self.isCalibrating = false
+            self.statusText = self.motion.isCalibrated ? "Calibrated" : "Calib failed"
+        }
+    }
+
+    func startLiveDirectionStream() {
+        if !motion.isRunning { motion.start() }
+        motion.isStreamingLiveDirection = true
+        statusText = "Live direction on"
+    }
+
+    func stopLiveDirectionStream() {
+        motion.isStreamingLiveDirection = false
+        statusText = motion.isCalibrated ? "Calibrated" : "Armed"
     }
 
     func startMonitoring() {
@@ -114,7 +142,19 @@ final class WatchSessionManager: NSObject {
         }
     }
 
-    private func sendStrike(watchTime: WatchTime, peakG: Double) {
+    private func sendLiveDirection(_ octant: Int) {
+        lastDetectedOctant = octant
+        let payload: [String: Any] = [
+            WCMessageKey.type: WCMessageKey.liveDirection,
+            WCMessageKey.detectedOctant: octant
+        ]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+        }
+        // Skip transferUserInfo for live stream — too chatty when unreachable.
+    }
+
+    private func sendStrike(watchTime: WatchTime, peakG: Double, detectedOctant: Int?) {
         guard let offset = clockSync.offsetSeconds else {
             statusText = "Strike (no sync)"
             return
@@ -123,7 +163,8 @@ final class WatchSessionManager: NSObject {
         let event = StrikeEvent(
             watchTimestamp: watchTime.seconds,
             peakG: peakG,
-            phoneTimestamp: phone.seconds
+            phoneTimestamp: phone.seconds,
+            detectedOctant: detectedOctant
         )
         let message = event.asMessage()
         if session.isReachable {
@@ -135,7 +176,12 @@ final class WatchSessionManager: NSObject {
         } else {
             session.transferUserInfo(message)
         }
-        statusText = String(format: "Strike %.1fg", peakG)
+        lastDetectedOctant = detectedOctant
+        if let octant = detectedOctant, let label = ClockOctant(rawValue: octant)?.label {
+            statusText = String(format: "Strike %.1fg · %@", peakG, label)
+        } else {
+            statusText = String(format: "Strike %.1fg", peakG)
+        }
         WKInterfaceDevice.current().play(.click)
     }
 
@@ -175,19 +221,34 @@ extension WatchSessionManager: WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         Task { @MainActor in
-            guard let type = message[WCMessageKey.type] as? String else { return }
-            if type == WCMessageKey.breakPointHaptic {
-                playBreakPointHaptic()
-            }
+            handleInbound(message)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         Task { @MainActor in
-            guard let type = userInfo[WCMessageKey.type] as? String else { return }
-            if type == WCMessageKey.breakPointHaptic {
-                playBreakPointHaptic()
-            }
+            handleInbound(userInfo)
+        }
+    }
+
+    private func handleInbound(_ message: [String: Any]) {
+        guard let type = message[WCMessageKey.type] as? String else { return }
+        switch type {
+        case WCMessageKey.breakPointHaptic:
+            playBreakPointHaptic()
+        case WCMessageKey.calibrateStart:
+            let duration = (message["duration"] as? Double) ?? 10
+            beginCalibration(durationSeconds: duration)
+        case WCMessageKey.calibrateStop:
+            motion.stopCalibration()
+            isCalibrating = false
+            statusText = motion.isCalibrated ? "Calibrated" : "Calib stopped"
+        case WCMessageKey.liveDirectionStart:
+            startLiveDirectionStream()
+        case WCMessageKey.liveDirectionStop:
+            stopLiveDirectionStream()
+        default:
+            break
         }
     }
 }

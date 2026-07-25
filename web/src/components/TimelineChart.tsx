@@ -9,7 +9,7 @@ import {
   YAxis,
   ReferenceLine,
 } from 'recharts'
-import type { Session, Trial } from '../types/session'
+import { isKineticModule, type Session, type Trial } from '../types/session'
 
 interface TimelineChartProps {
   trials: Trial[]
@@ -24,32 +24,51 @@ export function TimelineChart({
   selectedIndex,
   onSelect,
 }: TimelineChartProps) {
+  const kinetic = isKineticModule(session.module)
+
+  let runningHits = 0
+  let runningN = 0
   const data = trials
     .filter((t) => t.valid)
-    .map((t) => ({
-      index: t.index,
-      visualRtMs: Math.round(t.visualRtMs),
-      motorRtMs: Math.round(t.motorRtMs),
-      gapMs: Math.round(t.cognitiveMotorGapMs),
-    }))
+    .map((t) => {
+      if (t.spatialMatch != null) {
+        runningN += 1
+        if (t.spatialMatch) runningHits += 1
+      }
+      return {
+        index: t.index,
+        visualRtMs: t.visualRtMs != null ? Math.round(t.visualRtMs) : null,
+        motorRtMs: t.motorRtMs != null ? Math.round(t.motorRtMs) : null,
+        arousal: t.arousalIndex != null ? Math.round(t.arousalIndex * 100) : null,
+        accuracyPct: runningN > 0 ? Math.round((runningHits / runningN) * 100) : null,
+      }
+    })
 
   return (
     <div className="flex h-full min-h-[260px] flex-col rounded-sm border border-line bg-panel/70 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-display text-sm font-medium tracking-wide text-fog">
-          Reaction timeline
+          {kinetic ? 'Motor + spatial timeline' : 'Vision reaction timeline'}
         </h2>
         <div className="flex gap-4 font-mono text-[10px] uppercase tracking-wider text-muted">
-          <span className="text-visual">● Visual RT</span>
-          <span className="text-motor">● Motor RT</span>
-          <span className="text-signal">● Cognitive-Motor Gap</span>
+          {kinetic ? (
+            <>
+              <span className="text-motor">● Motor RT</span>
+              <span className="text-signal">● Cum. accuracy %</span>
+            </>
+          ) : (
+            <>
+              <span className="text-visual">● Visual RT</span>
+              <span className="text-signal">● Arousal ×100</span>
+            </>
+          )}
         </div>
       </div>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={data}
-            margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+            margin={{ top: 8, right: kinetic ? 36 : 12, left: 0, bottom: 0 }}
             onClick={(state) => {
               const payload = state as {
                 activePayload?: Array<{ payload?: { index?: number } }>
@@ -72,11 +91,23 @@ export function TimelineChart({
               }}
             />
             <YAxis
+              yAxisId="ms"
               stroke="#6b8299"
               tick={{ fill: '#6b8299', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
               unit="ms"
               width={48}
             />
+            {kinetic ? (
+              <YAxis
+                yAxisId="pct"
+                orientation="right"
+                domain={[0, 100]}
+                stroke="#3dffc4"
+                tick={{ fill: '#6b8299', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+                unit="%"
+                width={40}
+              />
+            ) : null}
             <Tooltip
               contentStyle={{
                 background: '#0d141c',
@@ -90,6 +121,7 @@ export function TimelineChart({
             <Legend wrapperStyle={{ display: 'none' }} />
             {session.baselineGapMs != null ? (
               <ReferenceLine
+                yAxisId="ms"
                 y={session.baselineGapMs}
                 stroke="#3dffc4"
                 strokeDasharray="4 4"
@@ -98,6 +130,7 @@ export function TimelineChart({
             ) : null}
             {session.breakPointTrial != null ? (
               <ReferenceLine
+                yAxisId="ms"
                 x={session.breakPointTrial}
                 stroke="#ff3b4e"
                 strokeWidth={2}
@@ -110,35 +143,64 @@ export function TimelineChart({
               />
             ) : null}
             {selectedIndex != null ? (
-              <ReferenceLine x={selectedIndex} stroke="#9bb0c4" strokeOpacity={0.5} />
+              <ReferenceLine
+                yAxisId="ms"
+                x={selectedIndex}
+                stroke="#9bb0c4"
+                strokeOpacity={0.5}
+              />
             ) : null}
-            <Line
-              type="monotone"
-              dataKey="visualRtMs"
-              name="Visual RT"
-              stroke="#4da3ff"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
-            />
-            <Line
-              type="monotone"
-              dataKey="motorRtMs"
-              name="Motor RT"
-              stroke="#f0b429"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
-            />
-            <Line
-              type="monotone"
-              dataKey="gapMs"
-              name="Cognitive-Motor Gap"
-              stroke="#3dffc4"
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 5 }}
-            />
+            {kinetic ? (
+              <>
+                <Line
+                  yAxisId="ms"
+                  type="monotone"
+                  dataKey="motorRtMs"
+                  name="Motor RT"
+                  stroke="#f0b429"
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{ r: 5 }}
+                  connectNulls
+                />
+                <Line
+                  yAxisId="pct"
+                  type="monotone"
+                  dataKey="accuracyPct"
+                  name="Accuracy %"
+                  stroke="#3dffc4"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                  connectNulls
+                />
+              </>
+            ) : (
+              <>
+                <Line
+                  yAxisId="ms"
+                  type="monotone"
+                  dataKey="visualRtMs"
+                  name="Visual RT"
+                  stroke="#4da3ff"
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{ r: 5 }}
+                  connectNulls
+                />
+                <Line
+                  yAxisId="ms"
+                  type="monotone"
+                  dataKey="arousal"
+                  name="Arousal"
+                  stroke="#3dffc4"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                  connectNulls
+                />
+              </>
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>

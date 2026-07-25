@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import type { DataMode } from '../hooks/useSession'
+import type { SessionModule } from '../types/session'
 
 interface SessionPickerProps {
   sessionId: string
   onChange: (id: string) => void
   mode: DataMode
   isDemoForced: boolean
-  onForceDemo: () => void
+  onForceDemo: (module?: SessionModule) => void
   onExitDemo: () => void
   error: string | null
+  module: SessionModule | null
 }
 
 export function SessionPicker({
@@ -19,6 +21,7 @@ export function SessionPicker({
   onForceDemo,
   onExitDemo,
   error,
+  module,
 }: SessionPickerProps) {
   const [draft, setDraft] = useState(sessionId)
 
@@ -48,6 +51,12 @@ export function SessionPicker({
         </button>
       </form>
 
+      {module ? (
+        <div className="rounded-sm border border-line px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-fog">
+          {module === 'kineticClock' ? 'Kinetic Clock' : 'Vision PVT'}
+        </div>
+      ) : null}
+
       <div
         className={`rounded-sm border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${
           mode === 'live'
@@ -70,15 +79,22 @@ export function SessionPicker({
         >
           Exit demo
         </button>
-      ) : (
-        <button
-          type="button"
-          onClick={onForceDemo}
-          className="rounded-sm border border-amber/30 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-amber hover:bg-amber/10"
-        >
-          Demo mode
-        </button>
-      )}
+      ) : null}
+
+      <button
+        type="button"
+        onClick={() => onForceDemo('visionPvt')}
+        className="rounded-sm border border-visual/30 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-visual hover:bg-visual/10"
+      >
+        Demo vision
+      </button>
+      <button
+        type="button"
+        onClick={() => onForceDemo('kineticClock')}
+        className="rounded-sm border border-motor/30 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-motor hover:bg-motor/10"
+      >
+        Demo kinetic
+      </button>
 
       {error ? (
         <span className="max-w-md truncate font-mono text-[11px] text-muted" title={error}>

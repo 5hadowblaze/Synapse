@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import type { TrialWithGaze } from '../types/session'
+import {
+  isKineticModule,
+  octantLabel,
+  type SessionModule,
+  type TrialWithGaze,
+} from '../types/session'
 
 interface GazeFieldProps {
   trial: TrialWithGaze | null
   scrubMs: number
+  module: SessionModule
 }
 
+/** 3×3 legacy pad positions (vision / legacy). */
 const CELL_POSITIONS: [number, number, number][] = (() => {
   const out: [number, number, number][] = []
   for (let row = 0; row < 3; row++) {
@@ -17,7 +24,15 @@ const CELL_POSITIONS: [number, number, number][] = (() => {
   return out
 })()
 
-export function GazeField({ trial, scrubMs }: GazeFieldProps) {
+/** 8 clock spokes: 12, 1:30, 3, … 10:30 (octant 0..7). */
+const OCTANT_POSITIONS: [number, number, number][] = Array.from({ length: 8 }, (_, i) => {
+  const angle = (i * Math.PI) / 4 - Math.PI / 2
+  const r = 1.55
+  return [Math.cos(angle) * r, Math.sin(angle) * r, 0]
+})
+
+export function GazeField({ trial, scrubMs, module }: GazeFieldProps) {
+  const kinetic = isKineticModule(module)
   const mountRef = useRef<HTMLDivElement>(null)
   const stateRef = useRef<{
     renderer: THREE.WebGLRenderer
@@ -28,6 +43,7 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
     trailGeom: THREE.BufferGeometry
     heatSprites: THREE.Mesh[]
     targets: THREE.Mesh[]
+    detectedRing: THREE.Mesh
     frame: number
   } | null>(null)
 
@@ -72,9 +88,25 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
     grid.position.z = -0.4
     scene.add(grid)
 
+    if (kinetic) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(1.35, 1.75, 64),
+        new THREE.MeshBasicMaterial({
+          color: 0x1e2d3d,
+          transparent: true,
+          opacity: 0.55,
+          side: THREE.DoubleSide,
+        }),
+      )
+      scene.add(ring)
+    }
+
+    const positions = kinetic ? OCTANT_POSITIONS : CELL_POSITIONS
     const targets: THREE.Mesh[] = []
-    CELL_POSITIONS.forEach((pos, i) => {
-      const geo = new THREE.BoxGeometry(0.55, 0.55, 0.08)
+    positions.forEach((pos, i) => {
+      const geo = kinetic
+        ? new THREE.CircleGeometry(0.22, 24)
+        : new THREE.BoxGeometry(0.55, 0.55, 0.08)
       const mat = new THREE.MeshStandardMaterial({
         color: 0x1e2d3d,
         emissive: 0x0d141c,
@@ -87,13 +119,27 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
       scene.add(mesh)
       targets.push(mesh)
 
-      const edge = new THREE.LineSegments(
-        new THREE.EdgesGeometry(geo),
-        new THREE.LineBasicMaterial({ color: 0x3dffc4, transparent: true, opacity: 0.35 }),
-      )
-      edge.position.copy(mesh.position)
-      scene.add(edge)
+      if (!kinetic) {
+        const edge = new THREE.LineSegments(
+          new THREE.EdgesGeometry(geo),
+          new THREE.LineBasicMaterial({ color: 0x3dffc4, transparent: true, opacity: 0.35 }),
+        )
+        edge.position.copy(mesh.position)
+        scene.add(edge)
+      }
     })
+
+    const detectedRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.28, 0.36, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xff3b4e,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+      }),
+    )
+    detectedRing.position.z = 0.05
+    scene.add(detectedRing)
 
     const gazeDot = new THREE.Mesh(
       new THREE.SphereGeometry(0.08, 16, 16),
@@ -154,6 +200,7 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
       trailGeom,
       heatSprites,
       targets,
+      detectedRing,
       frame,
     }
 
@@ -164,7 +211,7 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
       mount.removeChild(renderer.domElement)
       stateRef.current = null
     }
-  }, [])
+  }, [kinetic])
 
   useEffect(() => {
     const state = stateRef.current
@@ -172,17 +219,29 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
 
     state.targets.forEach((mesh, i) => {
       const mat = mesh.material as THREE.MeshStandardMaterial
-      const active = trial?.targetCell === i
+      const active = kinetic
+        ? trial?.targetOctant === i
+        : trial?.targetCell === i
       mat.emissive = new THREE.Color(active ? 0x3dffc4 : 0x0d141c)
       mat.emissiveIntensity = active ? 0.9 : 0.2
       mat.color = new THREE.Color(active ? 0x1a3d34 : 0x1e2d3d)
     })
 
-    // Heatmap from full window
+    if (kinetic && trial?.detectedOctant != null) {
+      const pos = OCTANT_POSITIONS[trial.detectedOctant]
+      state.detectedRing.position.x = pos[0]
+      state.detectedRing.position.y = pos[1]
+      const mat = state.detectedRing.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.95
+      mat.color = new THREE.Color(trial.spatialMatch ? 0x3dffc4 : 0xff3b4e)
+    } else {
+      ;(state.detectedRing.material as THREE.MeshBasicMaterial).opacity = 0
+    }
+
     state.heatSprites.forEach((sprite, i) => {
       const mat = sprite.material as THREE.MeshBasicMaterial
       const pt = heatPoints[i]
-      if (!pt) {
+      if (!pt || kinetic) {
         mat.opacity = 0
         return
       }
@@ -191,7 +250,7 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
       mat.opacity = 0.08 + (i / Math.max(heatPoints.length, 1)) * 0.25
     })
 
-    if (!trial?.gaze || trial.gaze.samples.length === 0) {
+    if (kinetic || !trial?.gaze || trial.gaze.samples.length === 0) {
       state.gazeDot.visible = false
       state.trailGeom.setAttribute(
         'position',
@@ -215,16 +274,27 @@ export function GazeField({ trial, scrubMs }: GazeFieldProps) {
     })
     state.trailGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     state.trailGeom.computeBoundingSphere()
-  }, [trial, scrubMs, heatPoints])
+  }, [trial, scrubMs, heatPoints, kinetic])
+
+  const subtitle = (() => {
+    if (!trial) return 'No trial'
+    if (kinetic) {
+      const match =
+        trial.spatialMatch == null ? '' : trial.spatialMatch ? ' · match' : ' · miss'
+      return `Trial ${trial.index} · T ${octantLabel(trial.targetOctant)} → D ${octantLabel(trial.detectedOctant)}${match}`
+    }
+    const cell = trial.targetCell != null ? `cell ${trial.targetCell}` : 'flash'
+    return `Trial ${trial.index} · ${cell}`
+  })()
 
   return (
     <div className="flex h-full min-h-[320px] flex-col rounded-sm border border-line bg-panel/70">
       <div className="flex items-center justify-between border-b border-line px-4 py-2">
         <h2 className="font-display text-sm font-medium tracking-wide text-fog">
-          Gaze field
+          {kinetic ? 'Clock field' : 'Gaze field'}
         </h2>
         <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
-          {trial ? `Trial ${trial.index} · cell ${trial.targetCell}` : 'No trial'}
+          {subtitle}
         </span>
       </div>
       <div ref={mountRef} className="min-h-0 flex-1" />

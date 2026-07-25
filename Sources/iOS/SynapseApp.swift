@@ -1,37 +1,150 @@
 import SwiftUI
 
+enum AppRoute: Equatable {
+    case hub
+    case visionSetup
+    case visionLive
+    case kineticSetup
+    case kineticLive
+}
+
 @Observable
 @MainActor
 final class AppModel {
     let phoneSession = PhoneSessionManager()
     let faceTracker = FaceTracker()
-    let trialEngine = TrialEngine()
+    let gazeMapper = GazeScreenMapper()
+    let visionEngine = VisionPVTEngine()
+    let kineticEngine = KineticClockEngine()
     let writer = SessionWriter()
 
     var athleteId = "athlete-1"
     var hudMessage = "Synapse"
     var showBreakPointFlash = false
+    var route: AppRoute = .hub
+    var lastDetectedOctant: Int?
+    var isWatchCalibrating = false
+    /// True after a successful Calibrate Watch on this phone session.
+    var watchIMUCalibrated = false
+    /// Live Watch pointing octant (optional corroboration / strike spatial).
+    var watchLiveOctant: Int?
+
+    /// Spoke highlight — prefer front-camera arm; Watch is optional fallback.
+    var kineticPreviewOctant: Int? {
+        faceTracker.armOctant ?? watchLiveOctant ?? phoneSession.lastLiveOctant
+    }
+
+    /// Watch is reachable for strike timestamps (not required for spoke lighting).
+    var isWatchConnected: Bool {
+        phoneSession.isReachable
+    }
 
     func bootstrap() {
         wireCallbacks()
         faceTracker.start()
     }
 
-    func startLiveSession() {
+    // MARK: - Hub
+
+    func openVision() {
+        faceTracker.setArmPoseEnabled(false)
+        faceTracker.ensureStarted()
+        route = .visionSetup
+        hudMessage = "Vision PVT"
+    }
+
+    func openKinetic() {
+        faceTracker.ensureStarted()
+        faceTracker.setArmPoseEnabled(true)
+        phoneSession.sendLiveDirectionStart()
+        route = .kineticSetup
+        hudMessage = isWatchConnected
+            ? "Face + arm camera · Watch for strikes"
+            : "Face + arm camera · Watch optional for strikes"
+    }
+
+    func returnToHub() {
+        visionEngine.stopSession()
+        kineticEngine.stopSession()
+        phoneSession.sendLiveDirectionStop()
+        watchLiveOctant = nil
+        faceTracker.setArmPoseEnabled(false)
+        faceTracker.ensureStarted()
+        route = .hub
+        hudMessage = "Synapse"
+    }
+
+    // MARK: - Vision PVT
+
+    func startVisionSession() {
+        faceTracker.setArmPoseEnabled(false)
+        faceTracker.ensureStarted()
         _ = writer.startSession(
             athleteId: athleteId,
+            module: .visionPvt,
             clockOffsetMs: phoneSession.lastSyncOffsetMs,
             clockRttMs: phoneSession.lastSyncRttMs
         )
         faceTracker.resetDetectors()
-        trialEngine.startSession()
-        hudMessage = "Live session"
+        visionEngine.startSession()
+        route = .visionLive
+        hudMessage = "Vision live"
     }
 
-    func stopLiveSession() {
-        trialEngine.stopSession()
+    func stopVisionSession() {
+        visionEngine.stopSession()
         writer.completeSession()
-        hudMessage = "Stopped"
+        route = .visionSetup
+        hudMessage = "Vision stopped"
+    }
+
+    func calibrateGaze() {
+        guard let lookAt = faceTracker.latestGaze?.lookAt else {
+            hudMessage = "Calibrate needs face"
+            return
+        }
+        gazeMapper.calibrateToCenter(lookAt: lookAt)
+        hudMessage = "Gaze calibrated"
+    }
+
+    // MARK: - Kinetic Clock
+
+    func calibrateWatch() {
+        isWatchCalibrating = true
+        watchIMUCalibrated = false
+        phoneSession.sendCalibrateStart(durationSeconds: 10)
+        hudMessage = "Watch calibrating 10s — face phone, arms neutral"
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_500_000_000)
+            self.isWatchCalibrating = false
+            self.watchIMUCalibrated = true
+            self.phoneSession.sendLiveDirectionStart()
+            self.hudMessage = "Watch calibrate done — strikes use IMU"
+        }
+    }
+
+    func startKineticSession() {
+        faceTracker.ensureStarted()
+        faceTracker.setArmPoseEnabled(true)
+        phoneSession.sendLiveDirectionStart()
+        _ = writer.startSession(
+            athleteId: athleteId,
+            module: .kineticClock,
+            clockOffsetMs: phoneSession.lastSyncOffsetMs,
+            clockRttMs: phoneSession.lastSyncRttMs
+        )
+        kineticEngine.startSession()
+        route = .kineticLive
+        hudMessage = "Kinetic live"
+    }
+
+    func stopKineticSession() {
+        kineticEngine.stopSession()
+        writer.completeSession()
+        faceTracker.setArmPoseEnabled(true)
+        phoneSession.sendLiveDirectionStart()
+        route = .kineticSetup
+        hudMessage = "Kinetic stopped · camera arm lights spokes"
     }
 
     func runCannedReplay() {
@@ -46,7 +159,17 @@ final class AppModel {
 
     private func wireCallbacks() {
         phoneSession.onStrike = { [weak self] event in
-            self?.trialEngine.ingestStrike(event)
+            guard let self else { return }
+            self.lastDetectedOctant = event.detectedOctant
+            if self.kineticEngine.isRunning {
+                self.kineticEngine.ingestStrike(event)
+            }
+        }
+
+        phoneSession.onLiveDirection = { [weak self] octant in
+            guard let self else { return }
+            self.watchLiveOctant = octant
+            self.watchIMUCalibrated = true
         }
 
         phoneSession.onSyncQuality = { [weak self] offsetMs, rttMs in
@@ -55,29 +178,31 @@ final class AppModel {
 
         faceTracker.onGaze = { [weak self] sample in
             guard let self else { return }
-            self.trialEngine.ingestGaze(sample)
-            if let saccade = self.faceTracker.lastSaccade {
-                self.trialEngine.ingestSaccade(saccade)
-            }
-            if let arousal = self.faceTracker.lastArousal {
-                self.trialEngine.ingestArousal(arousal)
+            self.gazeMapper.update(lookAt: sample.lookAt)
+            if self.visionEngine.isRunning {
+                self.visionEngine.ingestGaze(sample)
+                if let saccade = self.faceTracker.lastSaccade {
+                    self.visionEngine.ingestSaccade(saccade)
+                }
+                if let arousal = self.faceTracker.lastArousal {
+                    self.visionEngine.ingestArousal(arousal)
+                }
             }
         }
 
-        trialEngine.onTrialCompleted = { [weak self] trial, gaze, t0 in
+        visionEngine.onTrialCompleted = { [weak self] trial, gaze, t0 in
             guard let self else { return }
-            // Fire-and-forget — writer never blocks the trial loop.
             self.writer.writeTrial(trial, gaze: gaze, t0Ms: t0)
             self.hudMessage = trial.valid
-                ? String(format: "Gap %.0f ms", trial.cognitiveMotorGapMs ?? 0)
+                ? String(format: "Visual RT %.0f ms", trial.visualRtMs ?? 0)
                 : "Invalid: \(trial.invalidReason ?? "?")"
         }
 
-        trialEngine.onBaselineReady = { [weak self] mean, std in
+        visionEngine.onBaselineReady = { [weak self] mean, std in
             self?.writer.writeBaseline(meanMs: mean, stdMs: std)
         }
 
-        trialEngine.onBreakPoint = { [weak self] index, mean, std in
+        visionEngine.onBreakPoint = { [weak self] index, mean, std in
             guard let self else { return }
             self.writer.writeBreakPoint(
                 trialIndex: index,
@@ -86,6 +211,47 @@ final class AppModel {
             )
             self.phoneSession.sendBreakPointHaptic()
             self.flashBreakPoint(trial: index)
+        }
+
+        kineticEngine.onTrialCompleted = { [weak self] trial in
+            guard let self else { return }
+            self.writer.writeTrial(trial)
+            let target = trial.targetOctant.flatMap { ClockOctant(rawValue: $0)?.label } ?? "?"
+            let detected = trial.detectedOctant.flatMap { ClockOctant(rawValue: $0)?.label } ?? "—"
+            let match = trial.spatialMatch == true ? "match" : "miss"
+            if let motor = trial.motorRtMs {
+                self.hudMessage = String(
+                    format: "Target: %@ · Detected: %@ · %@ · %.0f ms",
+                    target, detected, match, motor
+                )
+            } else {
+                self.hudMessage = "Target: \(target) · Detected: \(detected) · \(match)"
+            }
+        }
+
+        kineticEngine.onBaselineReady = { [weak self] mean, std in
+            self?.writer.writeBaseline(meanMs: mean, stdMs: std)
+        }
+
+        kineticEngine.onBreakPoint = { [weak self] index, mean, std in
+            guard let self else { return }
+            self.writer.writeBreakPoint(
+                trialIndex: index,
+                baselineGapMs: mean,
+                baselineStdMs: std
+            )
+            self.phoneSession.sendBreakPointHaptic()
+            self.flashBreakPoint(trial: index)
+        }
+
+        kineticEngine.onSessionComplete = { [weak self] in
+            guard let self else { return }
+            self.writer.completeSession()
+            self.faceTracker.setArmPoseEnabled(true)
+            self.phoneSession.sendLiveDirectionStart()
+            self.route = .kineticSetup
+            let acc = self.kineticEngine.spatialAccuracyPercent.map { String(format: "%.0f%%", $0) } ?? "—"
+            self.hudMessage = "Kinetic complete · spatial \(acc)"
         }
     }
 

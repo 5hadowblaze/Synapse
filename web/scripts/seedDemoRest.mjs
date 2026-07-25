@@ -1,6 +1,7 @@
 /**
  * Seed via Firestore REST + gcloud user token (bypasses client security rules).
  * Usage: node scripts/seedDemoRest.mjs
+ * Seeds both visionPvt and kineticClock demo sessions.
  */
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -20,7 +21,8 @@ const env = Object.fromEntries(
 )
 
 const PROJECT = env.VITE_FIREBASE_PROJECT_ID || 'synapse-clinical-hz'
-const SESSION_ID = env.VITE_DEFAULT_SESSION_ID || 'demo-session-001'
+const VISION_ID = env.VITE_VISION_SESSION_ID || env.VITE_DEFAULT_SESSION_ID || 'demo-vision-001'
+const KINETIC_ID = env.VITE_KINETIC_SESSION_ID || 'demo-kinetic-001'
 const TOKEN = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim()
 const BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents`
 
@@ -29,11 +31,7 @@ function rand(seed) {
   return x - Math.floor(x)
 }
 
-function makeGaze(targetCell, seed, fatigue) {
-  const col = targetCell % 3
-  const row = Math.floor(targetCell / 3)
-  const tx = (col - 1) * 0.35
-  const ty = (1 - row) * 0.35
+function makeGaze(seed, fatigue, offsetX = 0, offsetY = 0) {
   const samples = []
   for (let i = 0; i < 60; i++) {
     const dt = -200 + i * (1000 / 59)
@@ -45,8 +43,8 @@ function makeGaze(targetCell, seed, fatigue) {
       mapValue: {
         fields: {
           dt: { doubleValue: dt },
-          x: { doubleValue: tx * ease + drift + noise },
-          y: { doubleValue: ty * ease - drift * 0.6 + noise * 0.5 },
+          x: { doubleValue: offsetX * ease + drift + noise },
+          y: { doubleValue: offsetY * ease - drift * 0.6 + noise * 0.5 },
           z: { doubleValue: 0.9 - ease * 0.05 },
         },
       },
@@ -58,6 +56,10 @@ function makeGaze(targetCell, seed, fatigue) {
       samples: { arrayValue: { values: samples } },
     },
   }
+}
+
+function nullValue() {
+  return { nullValue: null }
 }
 
 async function patch(path, body) {
@@ -74,78 +76,151 @@ async function patch(path, body) {
   }
 }
 
-const baselineGaps = []
-const trials = []
+async function seedVision(sessionId) {
+  const baselineVisual = []
+  const trials = []
 
-for (let i = 0; i < 24; i++) {
-  const fatigue = i < 10 ? 0 : (i - 9) * 0.35
-  const visualRtMs = 95 + rand(i * 3) * 35 + fatigue * 4
-  const gapBase = 118 + rand(i * 7) * 22
-  const cognitiveMotorGapMs =
-    i < 10
-      ? gapBase
-      : gapBase + fatigue * 28 + (i === 14 ? 95 : i > 14 ? 40 + (i - 14) * 12 : 0)
-  const motorRtMs = visualRtMs + cognitiveMotorGapMs
-  const targetCell = Math.floor(rand(i * 11) * 9)
-  const targetOnsetMs = i * 2200 + 400
-  const trial = {
-    index: i,
-    targetCell,
-    targetOnsetMs,
-    saccadeOnsetMs: targetOnsetMs + visualRtMs,
-    gazeSettleMs: targetOnsetMs + visualRtMs + 40 + rand(i) * 30,
-    strikeMs: targetOnsetMs + motorRtMs,
-    visualRtMs: Math.round(visualRtMs),
-    motorRtMs: Math.round(motorRtMs),
-    cognitiveMotorGapMs: Math.round(cognitiveMotorGapMs),
-    peakG: 3.2 + rand(i * 5) * 2.4,
-    arousalIndex: 0.55 + rand(i * 13) * 0.35 - fatigue * 0.04,
-    valid: true,
+  for (let i = 0; i < 24; i++) {
+    const fatigue = i < 10 ? 0 : (i - 9) * 0.35
+    const visualRtMs = 95 + rand(i * 3) * 35 + fatigue * 4 + (i === 14 ? 55 : 0)
+    const targetOnsetMs = i * 2200 + 400
+    const trial = {
+      index: i,
+      targetOnsetMs,
+      saccadeOnsetMs: targetOnsetMs + visualRtMs,
+      gazeSettleMs: targetOnsetMs + visualRtMs + 40 + rand(i) * 30,
+      visualRtMs: Math.round(visualRtMs),
+      arousalIndex: 0.55 + rand(i * 13) * 0.35 - fatigue * 0.04,
+      flashX: (rand(i * 17) - 0.5) * 0.4,
+      flashY: (rand(i * 19) - 0.5) * 0.4,
+    }
+    if (i < 10) baselineVisual.push(trial.visualRtMs)
+    trials.push(trial)
   }
-  if (i < 10) baselineGaps.push(trial.cognitiveMotorGapMs)
-  trials.push(trial)
-}
 
-const mean = baselineGaps.reduce((a, b) => a + b, 0) / baselineGaps.length
-const variance = baselineGaps.reduce((a, b) => a + (b - mean) ** 2, 0) / baselineGaps.length
-const std = Math.sqrt(variance)
+  const mean = baselineVisual.reduce((a, b) => a + b, 0) / baselineVisual.length
+  const variance =
+    baselineVisual.reduce((a, b) => a + (b - mean) ** 2, 0) / baselineVisual.length
+  const std = Math.sqrt(variance)
 
-await patch(`sessions/${SESSION_ID}`, {
-  fields: {
-    athleteId: { stringValue: 'athlete-demo' },
-    startedAt: { integerValue: String(Date.now() - 55_000) },
-    status: { stringValue: 'active' },
-    clockOffsetMs: { doubleValue: 12.4 },
-    clockRttMs: { doubleValue: 38 },
-    baselineGapMs: { doubleValue: Math.round(mean * 10) / 10 },
-    baselineStdMs: { doubleValue: Math.round(std * 10) / 10 },
-    breakPointTrial: { integerValue: '14' },
-  },
-})
-
-for (const trial of trials) {
-  const id = String(trial.index)
-  const fatigue = trial.index < 10 ? 0 : (trial.index - 9) * 0.35
-  await patch(`sessions/${SESSION_ID}/trials/${id}`, {
+  await patch(`sessions/${sessionId}`, {
     fields: {
-      index: { integerValue: String(trial.index) },
-      targetCell: { integerValue: String(trial.targetCell) },
-      targetOnsetMs: { doubleValue: trial.targetOnsetMs },
-      saccadeOnsetMs: { doubleValue: trial.saccadeOnsetMs },
-      gazeSettleMs: { doubleValue: trial.gazeSettleMs },
-      strikeMs: { doubleValue: trial.strikeMs },
-      visualRtMs: { doubleValue: trial.visualRtMs },
-      motorRtMs: { doubleValue: trial.motorRtMs },
-      cognitiveMotorGapMs: { doubleValue: trial.cognitiveMotorGapMs },
-      peakG: { doubleValue: trial.peakG },
-      arousalIndex: { doubleValue: trial.arousalIndex },
-      valid: { booleanValue: true },
+      athleteId: { stringValue: 'athlete-demo' },
+      module: { stringValue: 'visionPvt' },
+      startedAt: { integerValue: String(Date.now() - 55_000) },
+      status: { stringValue: 'active' },
+      clockOffsetMs: { doubleValue: 0 },
+      clockRttMs: { doubleValue: 0 },
+      baselineGapMs: { doubleValue: Math.round(mean * 10) / 10 },
+      baselineStdMs: { doubleValue: Math.round(std * 10) / 10 },
+      breakPointTrial: { integerValue: '14' },
     },
   })
-  await patch(
-    `sessions/${SESSION_ID}/trials/${id}/gaze/window`,
-    makeGaze(trial.targetCell, trial.index + 1, fatigue),
-  )
+
+  for (const trial of trials) {
+    const id = String(trial.index)
+    const fatigue = trial.index < 10 ? 0 : (trial.index - 9) * 0.35
+    await patch(`sessions/${sessionId}/trials/${id}`, {
+      fields: {
+        index: { integerValue: String(trial.index) },
+        targetCell: nullValue(),
+        targetOctant: nullValue(),
+        detectedOctant: nullValue(),
+        spatialMatch: nullValue(),
+        targetOnsetMs: { doubleValue: trial.targetOnsetMs },
+        saccadeOnsetMs: { doubleValue: trial.saccadeOnsetMs },
+        gazeSettleMs: { doubleValue: trial.gazeSettleMs },
+        strikeMs: nullValue(),
+        visualRtMs: { doubleValue: trial.visualRtMs },
+        motorRtMs: nullValue(),
+        cognitiveMotorGapMs: nullValue(),
+        peakG: nullValue(),
+        arousalIndex: { doubleValue: trial.arousalIndex },
+        valid: { booleanValue: true },
+      },
+    })
+    await patch(
+      `sessions/${sessionId}/trials/${id}/gaze/window`,
+      makeGaze(trial.index + 1, fatigue, trial.flashX, trial.flashY),
+    )
+  }
+
+  console.log(`Seeded sessions/${sessionId} (visionPvt) with ${trials.length} trials via REST`)
 }
 
-console.log(`Seeded sessions/${SESSION_ID} with ${trials.length} trials via REST`)
+async function seedKinetic(sessionId) {
+  const baselineMotor = []
+  const trials = []
+
+  for (let i = 0; i < 16; i++) {
+    const fatigue = i < 8 ? 0 : (i - 7) * 0.4
+    const targetOctant = i % 8
+    const missRoll = rand(i * 23)
+    const missRate = i < 8 ? 0.12 : 0.12 + fatigue * 0.08
+    const spatialMatch = missRoll >= missRate
+    const detectedOctant = spatialMatch
+      ? targetOctant
+      : (targetOctant + 1 + Math.floor(rand(i * 29) * 3)) % 8
+    const motorRtMs = 210 + rand(i * 7) * 45 + fatigue * 18 + (i === 11 ? 90 : 0)
+    const targetOnsetMs = i * 2400 + 500
+    const trial = {
+      index: i,
+      targetOctant,
+      detectedOctant,
+      spatialMatch,
+      targetOnsetMs,
+      strikeMs: targetOnsetMs + motorRtMs,
+      motorRtMs: Math.round(motorRtMs),
+      peakG: 3.2 + rand(i * 5) * 2.4,
+    }
+    if (i < 8) baselineMotor.push(trial.motorRtMs)
+    trials.push(trial)
+  }
+
+  const mean = baselineMotor.reduce((a, b) => a + b, 0) / baselineMotor.length
+  const variance =
+    baselineMotor.reduce((a, b) => a + (b - mean) ** 2, 0) / baselineMotor.length
+  const std = Math.sqrt(variance)
+
+  await patch(`sessions/${sessionId}`, {
+    fields: {
+      athleteId: { stringValue: 'athlete-demo' },
+      module: { stringValue: 'kineticClock' },
+      startedAt: { integerValue: String(Date.now() - 45_000) },
+      status: { stringValue: 'active' },
+      clockOffsetMs: { doubleValue: 12.4 },
+      clockRttMs: { doubleValue: 38 },
+      baselineGapMs: { doubleValue: Math.round(mean * 10) / 10 },
+      baselineStdMs: { doubleValue: Math.round(std * 10) / 10 },
+      breakPointTrial: { integerValue: '11' },
+    },
+  })
+
+  for (const trial of trials) {
+    const id = String(trial.index)
+    await patch(`sessions/${sessionId}/trials/${id}`, {
+      fields: {
+        index: { integerValue: String(trial.index) },
+        targetCell: nullValue(),
+        targetOctant: { integerValue: String(trial.targetOctant) },
+        detectedOctant: { integerValue: String(trial.detectedOctant) },
+        spatialMatch: { booleanValue: trial.spatialMatch },
+        targetOnsetMs: { doubleValue: trial.targetOnsetMs },
+        saccadeOnsetMs: nullValue(),
+        gazeSettleMs: nullValue(),
+        strikeMs: { doubleValue: trial.strikeMs },
+        visualRtMs: nullValue(),
+        motorRtMs: { doubleValue: trial.motorRtMs },
+        cognitiveMotorGapMs: nullValue(),
+        peakG: { doubleValue: trial.peakG },
+        arousalIndex: nullValue(),
+        valid: { booleanValue: true },
+      },
+    })
+  }
+
+  console.log(`Seeded sessions/${sessionId} (kineticClock) with ${trials.length} trials via REST`)
+}
+
+await seedVision(VISION_ID)
+await seedKinetic(KINETIC_ID)

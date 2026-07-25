@@ -13,6 +13,7 @@ import { DEFAULT_SESSION_ID, getDb, isFirebaseConfigured } from '../lib/firebase
 import type {
   GazeWindow,
   Session,
+  SessionModule,
   SessionSnapshot,
   Trial,
   TrialWithGaze,
@@ -26,6 +27,19 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asNullableBool(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null
+}
+
+function parseModule(data: Record<string, unknown>): SessionModule {
+  if (data.module === 'kineticClock' || data.module === 'visionPvt') {
+    return data.module
+  }
+  // Infer from trial-shaped hints on the session doc, else default vision.
+  if (data.module === 'kinetic' || data.module === 'clock') return 'kineticClock'
+  return 'visionPvt'
 }
 
 function parseSession(id: string, data: Record<string, unknown>): Session {
@@ -45,6 +59,7 @@ function parseSession(id: string, data: Record<string, unknown>): Session {
   return {
     id,
     athleteId: typeof data.athleteId === 'string' ? data.athleteId : 'unknown',
+    module: parseModule(data),
     startedAt,
     status: data.status === 'complete' ? 'complete' : 'active',
     clockOffsetMs: asNumber(data.clockOffsetMs),
@@ -60,16 +75,19 @@ function parseTrial(id: string, data: Record<string, unknown>): Trial {
   return {
     id,
     index,
-    targetCell: asNumber(data.targetCell),
+    targetCell: asNullableNumber(data.targetCell),
+    targetOctant: asNullableNumber(data.targetOctant),
+    detectedOctant: asNullableNumber(data.detectedOctant),
+    spatialMatch: asNullableBool(data.spatialMatch),
     targetOnsetMs: asNumber(data.targetOnsetMs),
-    saccadeOnsetMs: asNumber(data.saccadeOnsetMs),
-    gazeSettleMs: asNumber(data.gazeSettleMs),
-    strikeMs: asNumber(data.strikeMs),
-    visualRtMs: asNumber(data.visualRtMs),
-    motorRtMs: asNumber(data.motorRtMs),
-    cognitiveMotorGapMs: asNumber(data.cognitiveMotorGapMs),
-    peakG: asNumber(data.peakG),
-    arousalIndex: asNumber(data.arousalIndex),
+    saccadeOnsetMs: asNullableNumber(data.saccadeOnsetMs),
+    gazeSettleMs: asNullableNumber(data.gazeSettleMs),
+    strikeMs: asNullableNumber(data.strikeMs),
+    visualRtMs: asNullableNumber(data.visualRtMs),
+    motorRtMs: asNullableNumber(data.motorRtMs),
+    cognitiveMotorGapMs: asNullableNumber(data.cognitiveMotorGapMs),
+    peakG: asNullableNumber(data.peakG),
+    arousalIndex: asNullableNumber(data.arousalIndex),
     valid: data.valid !== false,
   }
 }
@@ -102,7 +120,6 @@ async function loadGazeForTrial(
   try {
     const snap = await getDocs(collection(db, 'sessions', sessionId, 'trials', trialId, 'gaze'))
     if (snap.empty) return null
-    // Prefer a doc named "window", else first doc
     const preferred =
       snap.docs.find((d) => d.id === 'window') ??
       snap.docs[0]
@@ -118,7 +135,7 @@ export interface UseSessionResult {
   setSessionId: (id: string) => void
   snapshot: SessionSnapshot | null
   error: string | null
-  forceDemo: () => void
+  forceDemo: (module?: SessionModule) => void
   exitDemo: () => void
   isDemoForced: boolean
 }
@@ -139,11 +156,11 @@ export function useSession(initialId = DEFAULT_SESSION_ID): UseSessionResult {
     setSnapshot({ session: sessionRef.current, trials })
   }, [])
 
-  const forceDemo = useCallback(() => {
+  const forceDemo = useCallback((module: SessionModule = 'visionPvt') => {
     setIsDemoForced(true)
     setError(null)
     setMode('demo')
-    setSnapshot(buildDemoSnapshot())
+    setSnapshot(buildDemoSnapshot(module))
   }, [])
 
   const exitDemo = useCallback(() => {
@@ -153,7 +170,6 @@ export function useSession(initialId = DEFAULT_SESSION_ID): UseSessionResult {
   useEffect(() => {
     if (isDemoForced) return
 
-    // Tear down previous listeners
     unsubRef.current.forEach((u) => u())
     unsubRef.current = []
     trialsRef.current = new Map()

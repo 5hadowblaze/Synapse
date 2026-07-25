@@ -13,6 +13,9 @@ final class PhoneSessionManager: NSObject {
 
     var onStrike: ((StrikeEvent) -> Void)?
     var onSyncQuality: ((Double, Double) -> Void)?
+    /// Live Watch pointing octant (Kinetic spoke lighting).
+    var onLiveDirection: ((Int) -> Void)?
+    var lastLiveOctant: Int?
 
     private let session: WCSession
 
@@ -40,6 +43,54 @@ final class PhoneSessionManager: NSObject {
         }
     }
 
+    /// Ask watch to capture gravity / attitude reference (~10s).
+    func sendCalibrateStart(durationSeconds: Double = 10) {
+        let payload: [String: Any] = [
+            WCMessageKey.type: WCMessageKey.calibrateStart,
+            "duration": durationSeconds
+        ]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil) { [weak self] error in
+                Task { @MainActor in
+                    self?.statusText = "Calibrate send failed: \(error.localizedDescription)"
+                }
+            }
+            statusText = "Watch calibrating…"
+        } else {
+            session.transferUserInfo(payload)
+            statusText = "Watch calibrate queued"
+        }
+    }
+
+    func sendCalibrateStop() {
+        let payload: [String: Any] = [WCMessageKey.type: WCMessageKey.calibrateStop]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+        } else {
+            session.transferUserInfo(payload)
+        }
+    }
+
+    func sendLiveDirectionStart() {
+        let payload: [String: Any] = [WCMessageKey.type: WCMessageKey.liveDirectionStart]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+            statusText = "Watch live direction…"
+        } else {
+            session.transferUserInfo(payload)
+            statusText = "Live direction queued"
+        }
+    }
+
+    func sendLiveDirectionStop() {
+        let payload: [String: Any] = [WCMessageKey.type: WCMessageKey.liveDirectionStop]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+        } else {
+            session.transferUserInfo(payload)
+        }
+    }
+
     private func handleSyncPing(_ message: [String: Any], replyHandler: (([String: Any]) -> Void)?) {
         guard let t1 = message[WCMessageKey.t1] as? Double else { return }
         let t2 = PhoneTime.now().seconds
@@ -56,8 +107,29 @@ final class PhoneSessionManager: NSObject {
     private func handleStrike(_ message: [String: Any]) {
         guard let event = StrikeEvent.from(message: message) else { return }
         lastStrike = event
-        statusText = String(format: "Strike %.1fg", event.peakG)
+        if let octant = event.detectedOctant, let label = ClockOctant(rawValue: octant)?.label {
+            statusText = String(format: "Strike %.1fg · %@", event.peakG, label)
+        } else {
+            statusText = String(format: "Strike %.1fg", event.peakG)
+        }
         onStrike?(event)
+    }
+
+    private func handleLiveDirection(_ message: [String: Any]) {
+        let octant: Int?
+        if let i = message[WCMessageKey.detectedOctant] as? Int {
+            octant = i
+        } else if let d = message[WCMessageKey.detectedOctant] as? Double {
+            octant = Int(d)
+        } else {
+            octant = nil
+        }
+        guard let octant else { return }
+        lastLiveOctant = octant
+        onLiveDirection?(octant)
+        if let label = ClockOctant(rawValue: octant)?.label {
+            statusText = "Watch aim · \(label)"
+        }
     }
 
     private func handleSyncQuality(_ message: [String: Any]) {
@@ -106,6 +178,8 @@ extension PhoneSessionManager: WCSessionDelegate {
             switch type {
             case WCMessageKey.strike:
                 handleStrike(message)
+            case WCMessageKey.liveDirection:
+                handleLiveDirection(message)
             case WCMessageKey.syncPing:
                 handleSyncPing(message, replyHandler: nil)
             case "syncQuality":
@@ -132,6 +206,9 @@ extension PhoneSessionManager: WCSessionDelegate {
             case WCMessageKey.strike:
                 handleStrike(message)
                 replyHandler([WCMessageKey.type: "ack"])
+            case WCMessageKey.liveDirection:
+                handleLiveDirection(message)
+                replyHandler([WCMessageKey.type: "ack"])
             default:
                 replyHandler([:])
             }
@@ -144,6 +221,8 @@ extension PhoneSessionManager: WCSessionDelegate {
             switch type {
             case WCMessageKey.strike:
                 handleStrike(userInfo)
+            case WCMessageKey.liveDirection:
+                handleLiveDirection(userInfo)
             case "syncQuality":
                 handleSyncQuality(userInfo)
             default:

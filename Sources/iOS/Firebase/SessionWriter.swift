@@ -62,6 +62,7 @@ final class SessionWriter {
     var pendingWrites = 0
     var isFirebaseReady = false
     var stubWriteCount = 0
+    var activeModule: SessionModule?
 
     private var writeQueue: [() -> Void] = []
     private var isFlushing = false
@@ -77,16 +78,19 @@ final class SessionWriter {
     @discardableResult
     func startSession(
         athleteId: String,
+        module: SessionModule,
         clockOffsetMs: Double?,
         clockRttMs: Double?,
         sessionId preferredId: String? = nil
     ) -> String {
         let id = preferredId ?? UUID().uuidString
         sessionId = id
+        activeModule = module
         enqueue { [weak self] in
             self?.writeSessionCreate(
                 id: id,
                 athleteId: athleteId,
+                module: module,
                 clockOffsetMs: clockOffsetMs,
                 clockRttMs: clockRttMs
             )
@@ -109,6 +113,11 @@ final class SessionWriter {
         enqueue { [weak self] in
             self?.writeTrialDoc(sessionId: sessionId, trial: trial, gaze: gaze, t0Ms: t0Ms)
         }
+    }
+
+    /// Kinetic trials have no gaze window — write trial doc only.
+    func writeTrial(_ trial: TrialRecord) {
+        writeTrial(trial, gaze: [], t0Ms: (trial.targetOnsetMs ?? 0) - 200)
     }
 
     func writeBreakPoint(
@@ -146,6 +155,7 @@ final class SessionWriter {
     func ingestCannedSession(_ canned: CannedSession) {
         _ = startSession(
             athleteId: canned.athleteId,
+            module: canned.module,
             clockOffsetMs: canned.clockOffsetMs,
             clockRttMs: canned.clockRttMs,
             sessionId: canned.sessionId
@@ -190,12 +200,14 @@ final class SessionWriter {
     private func writeSessionCreate(
         id: String,
         athleteId: String,
+        module: SessionModule,
         clockOffsetMs: Double?,
         clockRttMs: Double?
     ) {
         // Match docs/SCHEMA.md / web Session: clock fields required; baselines null until ready.
         let data: [String: Any] = [
             "athleteId": athleteId,
+            "module": module.rawValue,
             "startedAt": Date().timeIntervalSince1970 * 1000,
             "status": "active",
             "clockOffsetMs": clockOffsetMs ?? 0,
@@ -255,6 +267,9 @@ final class SessionWriter {
         if let v = trial.peakG { data["peakG"] = v }
         if let v = trial.arousalIndex { data["arousalIndex"] = Double(v) }
         if let v = trial.invalidReason { data["invalidReason"] = v }
+        if let v = trial.targetOctant { data["targetOctant"] = v }
+        if let v = trial.detectedOctant { data["detectedOctant"] = v }
+        if let v = trial.spatialMatch { data["spatialMatch"] = v }
 
         // Plan path: sessions/{id}/trials/{index}/gaze → stored as subcollection doc "window".
         let gazeDoc: [String: Any] = [
@@ -273,9 +288,11 @@ final class SessionWriter {
                     self?.lastError = error?.localizedDescription
                 }
             }
-            trialRef.collection("gaze").document("window").setData(gazeDoc) { [weak self] error in
-                Task { @MainActor in
-                    self?.lastError = error?.localizedDescription
+            if !gaze.isEmpty {
+                trialRef.collection("gaze").document("window").setData(gazeDoc) { [weak self] error in
+                    Task { @MainActor in
+                        self?.lastError = error?.localizedDescription
+                    }
                 }
             }
             return

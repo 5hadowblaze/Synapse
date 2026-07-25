@@ -23,7 +23,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Synapse uses the TrueDepth camera for gaze tracking during reaction trials.</string>
+	<string>Synapse uses the front camera for TrueDepth face tracking and arm-direction preview during Kinetic Clock.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

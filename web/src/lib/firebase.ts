@@ -40,4 +40,4 @@ export function getDb(): Firestore | null {
 }
 
 export const DEFAULT_SESSION_ID =
-  (import.meta.env.VITE_DEFAULT_SESSION_ID as string | undefined) ?? 'demo-session-001'
+  (import.meta.env.VITE_DEFAULT_SESSION_ID as string | undefined) ?? 'demo-vision-001'

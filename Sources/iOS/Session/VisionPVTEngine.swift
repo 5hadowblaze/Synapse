@@ -1,61 +1,27 @@
 import Foundation
 import simd
 
-struct TrialRecord: Identifiable, Sendable, Equatable {
-    var id: Int { index }
-    let index: Int
-    let targetCell: Int
-    var targetOnsetMs: Double?
-    var saccadeOnsetMs: Double?
-    var gazeSettleMs: Double?
-    var strikeMs: Double?
-    var visualRtMs: Double?
-    var motorRtMs: Double?
-    var cognitiveMotorGapMs: Double?
-    var peakG: Double?
-    var arousalIndex: Float?
-    var valid: Bool
-    var invalidReason: String?
-
-    /// Session-relative ms from session start (phone clock).
-    static func relativeMs(absolute: PhoneTime, sessionStart: PhoneTime) -> Double {
-        absolute.milliseconds(since: sessionStart)
-    }
-}
-
-struct GazeWindowSample: Sendable, Equatable {
-    let dt: Double
-    let x: Float
-    let y: Float
-    let z: Float
-}
-
-enum TrialPhase: Equatable {
-    case idle
-    case waitingForOnset
-    case awaitingResponse
-    case complete
-}
-
+/// Classic single-flash PVT: saccade onset / settle / arousal. No punch, no grid.
 @Observable
 @MainActor
-final class TrialEngine {
-    static let gridSize = 9
-    static let strikeTimeoutMs: Double = 1500
+final class VisionPVTEngine {
+    static let responseTimeoutMs: Double = 1500
     static let interTrialDelayMs: Double = 800
     static let gazePreMs: Double = 200
     static let gazePostMs: Double = 800
+    /// Fixed center cell id for schema compatibility (retired 3×3).
+    static let centerCell = 4
 
     var phase: TrialPhase = .idle
-    var activeCell: Int?
+    var flashVisible = false
     var trialIndex = 0
     var trials: [TrialRecord] = []
     var statusText = "Ready"
     var sessionStart: PhoneTime?
     var isRunning = false
-    var lastCognitiveMotorGapMs: Double?
+    var lastVisualRtMs: Double?
     var breakPointTrial: Int?
-    var baselineGapMs: Double?
+    var baselineMeanMs: Double?
     var baselineStdMs: Double?
 
     private let displayClock = DisplayClock()
@@ -68,13 +34,12 @@ final class TrialEngine {
     private var blinkContaminated = false
     private var timeoutTask: Task<Void, Never>?
     private var interTrialTask: Task<Void, Never>?
+    private var breakPointDetector = BreakPointDetector()
 
     var onTrialCompleted: ((TrialRecord, [GazeWindowSample], Double) -> Void)?
-    var onTargetArmed: ((Int) -> Void)?
+    var onFlashArmed: (() -> Void)?
     var onBreakPoint: ((Int, Double?, Double?) -> Void)?
     var onBaselineReady: ((Double, Double) -> Void)?
-
-    private var breakPointDetector = BreakPointDetector()
 
     func startSession() {
         stopSession()
@@ -84,11 +49,11 @@ final class TrialEngine {
         trialIndex = 0
         trials = []
         breakPointTrial = nil
-        baselineGapMs = nil
+        baselineMeanMs = nil
         baselineStdMs = nil
         breakPointDetector.reset()
         isRunning = true
-        statusText = "Session started"
+        statusText = "Vision PVT started"
         displayClock.start()
         scheduleNextTrial()
     }
@@ -99,7 +64,7 @@ final class TrialEngine {
         interTrialTask?.cancel()
         displayClock.stop()
         phase = .idle
-        activeCell = nil
+        flashVisible = false
         current = nil
         statusText = "Session stopped"
     }
@@ -108,7 +73,6 @@ final class TrialEngine {
         guard isRunning else { return }
         gazeBuffer.append((sample.time, sample.lookAt))
         trimGazeBuffer(around: PhoneTime.now())
-
         if sample.isBlinking, phase == .awaitingResponse {
             blinkContaminated = true
         }
@@ -134,16 +98,6 @@ final class TrialEngine {
         pendingArousal = value
     }
 
-    func ingestStrike(_ event: StrikeEvent) {
-        guard phase == .awaitingResponse, var trial = current, let origin = sessionOrigin else { return }
-        guard trial.strikeMs == nil else { return }
-
-        let strikeMs = TrialRecord.relativeMs(absolute: event.phoneTime, sessionStart: origin)
-        trial.strikeMs = strikeMs
-        trial.peakG = event.peakG
-        finishTrial(trial)
-    }
-
     private func scheduleNextTrial() {
         guard isRunning else { return }
         interTrialTask?.cancel()
@@ -156,10 +110,9 @@ final class TrialEngine {
 
     private func beginTrial() {
         guard isRunning, let origin = sessionOrigin else { return }
-        let cell = Int.random(in: 0..<Self.gridSize)
-        var trial = TrialRecord(
+        let trial = TrialRecord(
             index: trialIndex,
-            targetCell: cell,
+            targetCell: Self.centerCell,
             targetOnsetMs: nil,
             saccadeOnsetMs: nil,
             gazeSettleMs: nil,
@@ -170,16 +123,19 @@ final class TrialEngine {
             peakG: nil,
             arousalIndex: nil,
             valid: true,
-            invalidReason: nil
+            invalidReason: nil,
+            targetOctant: nil,
+            detectedOctant: nil,
+            spatialMatch: nil
         )
         current = trial
         pendingSaccadeOnset = nil
         pendingSettle = nil
         blinkContaminated = false
         phase = .waitingForOnset
-        activeCell = cell
-        onTargetArmed?(cell)
-        statusText = "Trial \(trialIndex + 1) · cell \(cell)"
+        flashVisible = true
+        onFlashArmed?()
+        statusText = "Trial \(trialIndex + 1) · flash"
 
         displayClock.armOnsetCapture { [weak self] onset in
             Task { @MainActor in
@@ -196,7 +152,7 @@ final class TrialEngine {
     private func armTimeout() {
         timeoutTask?.cancel()
         timeoutTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(Self.strikeTimeoutMs * 1_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(Self.responseTimeoutMs * 1_000_000))
             guard !Task.isCancelled, self.phase == .awaitingResponse, var trial = self.current else { return }
             trial.valid = false
             trial.invalidReason = "miss"
@@ -213,13 +169,14 @@ final class TrialEngine {
         else { return }
 
         let saccadeMs = TrialRecord.relativeMs(absolute: onset, sessionStart: origin)
-        // Ignore saccades that precede target onset.
         if saccadeMs < (trial.targetOnsetMs ?? 0) { return }
         trial.saccadeOnsetMs = saccadeMs
         if let settle = pendingSettle {
             trial.gazeSettleMs = TrialRecord.relativeMs(absolute: settle, sessionStart: origin)
         }
         current = trial
+        // Complete on saccade — vision PVT does not wait for a punch.
+        finishTrial(trial)
     }
 
     private func finishTrial(_ trialIn: TrialRecord) {
@@ -234,22 +191,16 @@ final class TrialEngine {
 
         if let target = trial.targetOnsetMs, let saccade = trial.saccadeOnsetMs {
             trial.visualRtMs = saccade - target
-        }
-        if let target = trial.targetOnsetMs, let strike = trial.strikeMs {
-            trial.motorRtMs = strike - target
-        }
-        if let saccade = trial.saccadeOnsetMs, let strike = trial.strikeMs {
-            trial.cognitiveMotorGapMs = strike - saccade
-            lastCognitiveMotorGapMs = trial.cognitiveMotorGapMs
+            lastVisualRtMs = trial.visualRtMs
         }
 
-        if trial.strikeMs == nil, trial.invalidReason == nil {
+        if trial.saccadeOnsetMs == nil, trial.invalidReason == nil {
             trial.valid = false
             trial.invalidReason = "miss"
         }
 
         current = nil
-        activeCell = nil
+        flashVisible = false
         phase = .complete
         trials.append(trial)
         trialIndex += 1
@@ -258,18 +209,18 @@ final class TrialEngine {
         let t0 = (trial.targetOnsetMs ?? 0) - Self.gazePreMs
         onTrialCompleted?(trial, window, t0)
 
-        if trial.valid, let gap = trial.cognitiveMotorGapMs {
+        if trial.valid, let rt = trial.visualRtMs {
             let hadBaseline = breakPointDetector.baselineMean != nil
-            if let bp = breakPointDetector.ingest(trialIndex: trial.index, gapMs: gap) {
+            if let bp = breakPointDetector.ingest(trialIndex: trial.index, gapMs: rt) {
                 breakPointTrial = bp
-                baselineGapMs = breakPointDetector.baselineMean
+                baselineMeanMs = breakPointDetector.baselineMean
                 baselineStdMs = breakPointDetector.baselineStd
-                onBreakPoint?(bp, baselineGapMs, baselineStdMs)
+                onBreakPoint?(bp, baselineMeanMs, baselineStdMs)
                 statusText = "Break-point @ trial \(bp + 1)"
             } else if !hadBaseline,
                       let mean = breakPointDetector.baselineMean,
                       let std = breakPointDetector.baselineStd {
-                baselineGapMs = mean
+                baselineMeanMs = mean
                 baselineStdMs = std
                 onBaselineReady?(mean, std)
             }
