@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
+*.xcuserstate
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+.firebase/

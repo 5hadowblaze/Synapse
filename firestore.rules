@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  // HACKATHON DEMO RULES — open read/write for speed.
+  // EXPIRE / LOCK DOWN BY: 2026-08-01
+  // Do not ship these rules to production.
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

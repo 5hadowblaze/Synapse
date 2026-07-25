@@ -1,0 +1,147 @@
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  ReferenceLine,
+} from 'recharts'
+import type { Session, Trial } from '../types/session'
+
+interface TimelineChartProps {
+  trials: Trial[]
+  session: Session
+  selectedIndex: number | null
+  onSelect: (index: number) => void
+}
+
+export function TimelineChart({
+  trials,
+  session,
+  selectedIndex,
+  onSelect,
+}: TimelineChartProps) {
+  const data = trials
+    .filter((t) => t.valid)
+    .map((t) => ({
+      index: t.index,
+      visualRtMs: Math.round(t.visualRtMs),
+      motorRtMs: Math.round(t.motorRtMs),
+      gapMs: Math.round(t.cognitiveMotorGapMs),
+    }))
+
+  return (
+    <div className="flex h-full min-h-[260px] flex-col rounded-sm border border-line bg-panel/70 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-display text-sm font-medium tracking-wide text-fog">
+          Reaction timeline
+        </h2>
+        <div className="flex gap-4 font-mono text-[10px] uppercase tracking-wider text-muted">
+          <span className="text-visual">● Visual RT</span>
+          <span className="text-motor">● Motor RT</span>
+          <span className="text-signal">● Cognitive-Motor Gap</span>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            data={data}
+            margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+            onClick={(state) => {
+              const payload = state as {
+                activePayload?: Array<{ payload?: { index?: number } }>
+              }
+              const idx = payload.activePayload?.[0]?.payload?.index
+              if (typeof idx === 'number') onSelect(idx)
+            }}
+          >
+            <CartesianGrid stroke="#1e2d3d" strokeDasharray="3 3" />
+            <XAxis
+              dataKey="index"
+              stroke="#6b8299"
+              tick={{ fill: '#6b8299', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+              label={{
+                value: 'Trial',
+                position: 'insideBottomRight',
+                offset: -2,
+                fill: '#6b8299',
+                fontSize: 10,
+              }}
+            />
+            <YAxis
+              stroke="#6b8299"
+              tick={{ fill: '#6b8299', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+              unit="ms"
+              width={48}
+            />
+            <Tooltip
+              contentStyle={{
+                background: '#0d141c',
+                border: '1px solid #1e2d3d',
+                borderRadius: 2,
+                fontFamily: 'IBM Plex Mono',
+                fontSize: 12,
+              }}
+              labelFormatter={(v) => `Trial ${v}`}
+            />
+            <Legend wrapperStyle={{ display: 'none' }} />
+            {session.baselineGapMs != null ? (
+              <ReferenceLine
+                y={session.baselineGapMs}
+                stroke="#3dffc4"
+                strokeDasharray="4 4"
+                strokeOpacity={0.35}
+              />
+            ) : null}
+            {session.breakPointTrial != null ? (
+              <ReferenceLine
+                x={session.breakPointTrial}
+                stroke="#ff3b4e"
+                strokeWidth={2}
+                label={{
+                  value: 'BREAK',
+                  fill: '#ff3b4e',
+                  fontSize: 10,
+                  fontFamily: 'IBM Plex Mono',
+                }}
+              />
+            ) : null}
+            {selectedIndex != null ? (
+              <ReferenceLine x={selectedIndex} stroke="#9bb0c4" strokeOpacity={0.5} />
+            ) : null}
+            <Line
+              type="monotone"
+              dataKey="visualRtMs"
+              name="Visual RT"
+              stroke="#4da3ff"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4 }}
+            />
+            <Line
+              type="monotone"
+              dataKey="motorRtMs"
+              name="Motor RT"
+              stroke="#f0b429"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4 }}
+            />
+            <Line
+              type="monotone"
+              dataKey="gapMs"
+              name="Cognitive-Motor Gap"
+              stroke="#3dffc4"
+              strokeWidth={2.5}
+              dot={false}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
