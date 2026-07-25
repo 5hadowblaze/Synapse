@@ -2,10 +2,17 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 
 /** Simple QR via public API — enough for pitch title-slide / handout. */
+/** Production Hosting URL — pitch QR must encode this, not localhost. */
+const PRODUCTION_DASHBOARD_URL = 'https://synapse-clinical-hz.web.app'
+
 export function QrPage() {
   const url = useMemo(() => {
-    if (typeof window === 'undefined') return 'http://localhost:5173'
-    return window.location.origin
+    // Prefer live Hosting origin when served from Firebase; otherwise bake production.
+    if (typeof window !== 'undefined') {
+      const origin = window.location.origin
+      if (origin.includes('synapse-clinical-hz')) return origin
+    }
+    return PRODUCTION_DASHBOARD_URL
   }, [])
 
   const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&bgcolor=070b10&color=3dffc4&data=${encodeURIComponent(url)}`

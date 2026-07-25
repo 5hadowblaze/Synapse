@@ -17,9 +17,11 @@
 
 ## Dashboard QR
 
+- [ ] **Live Hosting:** https://synapse-clinical-hz.web.app
+- [ ] **Pitch QR page:** https://synapse-clinical-hz.web.app/qr (encodes the production URL).
 - [ ] Open `/qr` on the laptop (or title slide) — QR encodes the live dashboard origin.
 - [ ] Put the QR on the **title slide**; tell judges to scan while you talk.
-- [ ] If tethered: use the hotspot IP / tunnel URL, not `localhost`.
+- [ ] Prefer the Hosting URL above over hotspot IP / tunnel / `localhost`.
 - [ ] Smoke-test: scan → HUD loads → Demo mode works offline.
 
 ## Rehearse script (≈ 3 minutes)
