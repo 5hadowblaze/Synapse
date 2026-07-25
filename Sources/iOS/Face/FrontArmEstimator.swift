@@ -108,9 +108,16 @@ final class FrontArmEstimator: @unchecked Sendable {
             if let a = leftShoulder, let b = rightShoulder { bones.append((mirrored(a), mirrored(b))) }
         }
 
-        // Hand tips as optional extension beyond wrist.
+        // Hand tips as optional extension beyond wrist; also densify overlay with finger chains.
         var leftTip: CGPoint?
         var rightTip: CGPoint?
+        let fingerChains: [(String, [VNHumanHandPoseObservation.JointName])] = [
+            ("Th", [.thumbCMC, .thumbMP, .thumbTip]),
+            ("Ix", [.indexMCP, .indexPIP, .indexTip]),
+            ("Md", [.middleMCP, .middlePIP, .middleTip]),
+            ("Rg", [.ringMCP, .ringPIP, .ringTip]),
+            ("Pk", [.littleMCP, .littlePIP, .littleTip])
+        ]
         for hand in hands {
             guard let wrist = try? hand.recognizedPoint(.wrist), wrist.confidence > 0.2 else { continue }
             let tipNames: [VNHumanHandPoseObservation.JointName] = [.indexTip, .middleTip, .thumbTip]
@@ -125,16 +132,14 @@ final class FrontArmEstimator: @unchecked Sendable {
             let w = wrist.location
             let distL = leftWrist.map { hypot($0.x - w.x, $0.y - w.y) } ?? .greatestFiniteMagnitude
             let distR = rightWrist.map { hypot($0.x - w.x, $0.y - w.y) } ?? .greatestFiniteMagnitude
-            if distL <= distR {
+            let isLeft = distL <= distR
+            let prefix = isLeft ? "L" : "R"
+            if isLeft {
                 leftTip = bestTip?.0 ?? leftTip
                 if leftWrist == nil {
                     leftWrist = w
                     leftConf = wrist.confidence
                     addJoint("LWr", w, confidence: wrist.confidence)
-                }
-                if let tip = bestTip {
-                    addJoint("LTip", tip.0, confidence: tip.1)
-                    bones.append((mirrored(w), mirrored(tip.0)))
                 }
             } else {
                 rightTip = bestTip?.0 ?? rightTip
@@ -143,10 +148,21 @@ final class FrontArmEstimator: @unchecked Sendable {
                     rightConf = wrist.confidence
                     addJoint("RWr", w, confidence: wrist.confidence)
                 }
-                if let tip = bestTip {
-                    addJoint("RTip", tip.0, confidence: tip.1)
-                    bones.append((mirrored(w), mirrored(tip.0)))
+            }
+            // Finger lattice for wireframe net (overlay only; does not affect octant pick).
+            for (tag, chain) in fingerChains {
+                var prev: CGPoint? = w
+                for (idx, joint) in chain.enumerated() {
+                    guard let p = try? hand.recognizedPoint(joint), p.confidence > 0.18 else { continue }
+                    addJoint("\(prefix)\(tag)\(idx)", p.location, confidence: p.confidence)
+                    if let from = prev {
+                        bones.append((mirrored(from), mirrored(p.location)))
+                    }
+                    prev = p.location
                 }
+            }
+            if let tip = bestTip {
+                addJoint("\(prefix)Tip", tip.0, confidence: tip.1)
             }
         }
 

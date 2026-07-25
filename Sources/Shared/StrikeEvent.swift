@@ -1,29 +1,5 @@
 import Foundation
 
-enum WCMessageKey {
-    static let type = "type"
-    static let syncPing = "syncPing"
-    static let syncPong = "syncPong"
-    static let strike = "strike"
-    static let breakPointHaptic = "breakPointHaptic"
-    static let status = "status"
-    static let calibrateStart = "calibrateStart"
-    static let calibrateStop = "calibrateStop"
-    /// Phone asks Watch to stream continuous pointing octants (fallback arm preview).
-    static let liveDirectionStart = "liveDirectionStart"
-    static let liveDirectionStop = "liveDirectionStop"
-    /// Watch → Phone lightweight live octant sample (not a strike).
-    static let liveDirection = "liveDirection"
-
-    static let t1 = "t1"
-    static let t2 = "t2"
-    static let t3 = "t3"
-    static let watchTimestamp = "watchTimestamp"
-    static let peakG = "peakG"
-    static let phoneTimestamp = "phoneTimestamp"
-    static let detectedOctant = "detectedOctant"
-}
-
 struct StrikeEvent: Codable, Sendable, Equatable {
     /// Watch-local sample timestamp (`CMLogItem.timestamp`).
     let watchTimestamp: Double
@@ -50,12 +26,18 @@ struct StrikeEvent: Codable, Sendable, Equatable {
         return message
     }
 
+    /// Decode a WatchConnectivity strike payload.
+    /// Accepts `Int` or `Double` for numeric fields (WC bridging quirks).
     static func from(message: [String: Any]) -> StrikeEvent? {
+        if let type = message[WCMessageKey.type] as? String, type != WCMessageKey.strike {
+            return nil
+        }
         guard
-            let watchTimestamp = message[WCMessageKey.watchTimestamp] as? Double,
-            let peakG = message[WCMessageKey.peakG] as? Double,
-            let phoneTimestamp = message[WCMessageKey.phoneTimestamp] as? Double
+            let watchTimestamp = doubleValue(message[WCMessageKey.watchTimestamp]),
+            let peakG = doubleValue(message[WCMessageKey.peakG]),
+            let phoneTimestamp = doubleValue(message[WCMessageKey.phoneTimestamp])
         else { return nil }
+
         let octant: Int?
         if let i = message[WCMessageKey.detectedOctant] as? Int {
             octant = i
@@ -70,5 +52,12 @@ struct StrikeEvent: Codable, Sendable, Equatable {
             phoneTimestamp: phoneTimestamp,
             detectedOctant: octant
         )
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let d = value as? Double { return d }
+        if let i = value as? Int { return Double(i) }
+        if let n = value as? NSNumber { return n.doubleValue }
+        return nil
     }
 }

@@ -115,11 +115,11 @@ final class AppModel {
         phoneSession.sendCalibrateStart(durationSeconds: 10)
         hudMessage = "Watch calibrating 10s — face phone, arms neutral"
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 10_500_000_000)
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard self.isWatchCalibrating else { return }
+            // No ACK from Watch — do not falsely mark success.
             self.isWatchCalibrating = false
-            self.watchIMUCalibrated = true
-            self.phoneSession.sendLiveDirectionStart()
-            self.hudMessage = "Watch calibrate done — strikes use IMU"
+            self.hudMessage = "Watch calibrate timed out — retry"
         }
     }
 
@@ -170,6 +170,18 @@ final class AppModel {
             guard let self else { return }
             self.watchLiveOctant = octant
             self.watchIMUCalibrated = true
+        }
+
+        phoneSession.onCalibrateResult = { [weak self] success in
+            guard let self else { return }
+            self.isWatchCalibrating = false
+            self.watchIMUCalibrated = success
+            if success {
+                self.phoneSession.sendLiveDirectionStart()
+                self.hudMessage = "Watch calibrate done — strikes use IMU"
+            } else {
+                self.hudMessage = "Watch calibrate failed — retry"
+            }
         }
 
         phoneSession.onSyncQuality = { [weak self] offsetMs, rttMs in

@@ -7,8 +7,9 @@ struct SynapseWatchApp: App {
     var body: some Scene {
         WindowGroup {
             WatchContentView(session: session)
+                // Start once; do NOT stop on disappear — wrist-down / nav must keep
+                // workout + 100Hz motion + clock sync alive for the demo.
                 .onAppear { session.startMonitoring() }
-                .onDisappear { session.stopMonitoring() }
         }
     }
 }

@@ -15,7 +15,10 @@ final class PhoneSessionManager: NSObject {
     var onSyncQuality: ((Double, Double) -> Void)?
     /// Live Watch pointing octant (Kinetic spoke lighting).
     var onLiveDirection: ((Int) -> Void)?
+    /// Watch finished IMU calibration (`success` from Watch ACK).
+    var onCalibrateResult: ((Bool) -> Void)?
     var lastLiveOctant: Int?
+    var lastCalibrateSuccess: Bool?
 
     private let session: WCSession
 
@@ -47,7 +50,7 @@ final class PhoneSessionManager: NSObject {
     func sendCalibrateStart(durationSeconds: Double = 10) {
         let payload: [String: Any] = [
             WCMessageKey.type: WCMessageKey.calibrateStart,
-            "duration": durationSeconds
+            WCMessageKey.duration: durationSeconds
         ]
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil) { [weak self] error in
@@ -133,14 +136,28 @@ final class PhoneSessionManager: NSObject {
     }
 
     private func handleSyncQuality(_ message: [String: Any]) {
-        if let offset = message["offsetMs"] as? Double {
+        if let offset = message[WCMessageKey.offsetMs] as? Double {
             lastSyncOffsetMs = offset
         }
-        if let rtt = message["rttMs"] as? Double {
+        if let rtt = message[WCMessageKey.rttMs] as? Double {
             lastSyncRttMs = rtt
             onSyncQuality?(lastSyncOffsetMs ?? 0, rtt)
             statusText = String(format: "Sync RTT %.0fms", rtt)
         }
+    }
+
+    private func handleCalibrateResult(_ message: [String: Any]) {
+        let success: Bool
+        if let b = message[WCMessageKey.success] as? Bool {
+            success = b
+        } else if let n = message[WCMessageKey.success] as? NSNumber {
+            success = n.boolValue
+        } else {
+            return
+        }
+        lastCalibrateSuccess = success
+        statusText = success ? "Watch calibrated" : "Watch calibrate failed"
+        onCalibrateResult?(success)
     }
 }
 
@@ -182,8 +199,10 @@ extension PhoneSessionManager: WCSessionDelegate {
                 handleLiveDirection(message)
             case WCMessageKey.syncPing:
                 handleSyncPing(message, replyHandler: nil)
-            case "syncQuality":
+            case WCMessageKey.syncQuality:
                 handleSyncQuality(message)
+            case WCMessageKey.calibrateResult:
+                handleCalibrateResult(message)
             default:
                 break
             }
@@ -223,8 +242,10 @@ extension PhoneSessionManager: WCSessionDelegate {
                 handleStrike(userInfo)
             case WCMessageKey.liveDirection:
                 handleLiveDirection(userInfo)
-            case "syncQuality":
+            case WCMessageKey.syncQuality:
                 handleSyncQuality(userInfo)
+            case WCMessageKey.calibrateResult:
+                handleCalibrateResult(userInfo)
             default:
                 break
             }

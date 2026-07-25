@@ -55,7 +55,8 @@ targets:
         OTHER_LDFLAGS: "$(inherited) -ObjC"
         # DEVELOPMENT_TEAM: set in Xcode Signing & Capabilities
     scheme:
-      testTargets: []
+      testTargets:
+        - SynapseTests
 
   SynapseWatch:
     type: application
@@ -74,3 +75,19 @@ targets:
         # DEVELOPMENT_TEAM: set in Xcode Signing & Capabilities
     scheme:
       testTargets: []
+
+  SynapseTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/SynapseTests
+    dependencies:
+      - target: Synapse
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.synapse.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        # Hosted tests so @testable import Synapse resolves KineticClockEngine.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Synapse.app/Synapse"
+        BUNDLE_LOADER: "$(TEST_HOST)"

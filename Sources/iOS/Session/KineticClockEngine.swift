@@ -88,6 +88,39 @@ final class KineticClockEngine {
         finishTrial(trial)
     }
 
+    /// Test seam: arm a trial in `.awaitingResponse` without CADisplayLink.
+    func armAwaitingStrikeForTesting(
+        targetOctant: Int,
+        sessionStart: PhoneTime,
+        targetOnsetMs: Double,
+        trialIndex: Int = 0
+    ) {
+        self.sessionStart = sessionStart
+        self.sessionOrigin = sessionStart
+        self.trialIndex = trialIndex
+        self.isRunning = true
+        self.phase = .awaitingResponse
+        self.activeOctant = targetOctant
+        self.current = TrialRecord(
+            index: trialIndex,
+            targetCell: targetOctant,
+            targetOnsetMs: targetOnsetMs,
+            saccadeOnsetMs: nil,
+            gazeSettleMs: nil,
+            strikeMs: nil,
+            visualRtMs: nil,
+            motorRtMs: nil,
+            cognitiveMotorGapMs: nil,
+            peakG: nil,
+            arousalIndex: nil,
+            valid: true,
+            invalidReason: nil,
+            targetOctant: targetOctant,
+            detectedOctant: nil,
+            spatialMatch: nil
+        )
+    }
+
     private func scheduleNextTrial() {
         guard isRunning else { return }
         if trialIndex >= maxTrials || octantQueue.isEmpty {

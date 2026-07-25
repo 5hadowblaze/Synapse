@@ -3,13 +3,13 @@ import SceneKit
 import SwiftUI
 import UIKit
 
-/// Front-camera face mesh + cyan gaze ray + optional arm skeleton overlay.
+/// Front-camera face mesh + cyan gaze ray + optional arm wireframe overlay.
 struct FaceARPreviewView: UIViewRepresentable {
     let session: ARSession
     var isTracked: Bool
     var saccadeFlashToken: Int
     var mirrored: Bool = true
-    /// When set, draws Vision arm joints / bones in screen space.
+    /// When set, draws Vision arm joints / bones as a white wireframe net (matches face mesh).
     var armJoints: [FrontArmEstimator.OverlayJoint] = []
     var armBones: [(CGPoint, CGPoint)] = []
     /// Called once after the view attaches so FaceTracker can refresh face anchors.
@@ -76,6 +76,9 @@ struct FaceARPreviewView: UIViewRepresentable {
         private var armLayer: CAShapeLayer?
         private var lastFlashToken = 0
 
+        /// Matches `ARSCNFaceGeometry` wireframe: white lines @ ~0.85 alpha.
+        private static let armWireColor = UIColor.white.withAlphaComponent(0.85)
+
         func installChrome(on view: ARSCNView) {
             let ring = CAShapeLayer()
             ring.fillColor = UIColor.clear.cgColor
@@ -87,8 +90,8 @@ struct FaceARPreviewView: UIViewRepresentable {
 
             let arm = CAShapeLayer()
             arm.fillColor = UIColor.clear.cgColor
-            arm.strokeColor = UIColor.systemGreen.withAlphaComponent(0.95).cgColor
-            arm.lineWidth = 3
+            arm.strokeColor = Self.armWireColor.cgColor
+            arm.lineWidth = 1
             arm.lineCap = .round
             arm.lineJoin = .round
             view.layer.addSublayer(arm)
@@ -151,18 +154,64 @@ struct FaceARPreviewView: UIViewRepresentable {
 
             let path = UIBezierPath()
             for bone in bones {
-                let a = map(bone.0)
-                let b = map(bone.1)
-                path.move(to: a)
-                path.addLine(to: b)
+                Self.appendBoneLattice(to: path, from: map(bone.0), to: map(bone.1))
             }
             for joint in joints {
-                let c = map(joint.point)
-                path.move(to: CGPoint(x: c.x + 5, y: c.y))
-                path.addArc(withCenter: c, radius: 5, startAngle: 0, endAngle: .pi * 2, clockwise: true)
+                Self.appendJointNode(to: path, at: map(joint.point))
             }
             armLayer.path = path.cgPath
             armLayer.isHidden = joints.isEmpty && bones.isEmpty
+        }
+
+        /// Tubular triangle lattice along a bone — reads like face-mesh wireframe, not a thick stick.
+        private static func appendBoneLattice(to path: UIBezierPath, from a: CGPoint, to b: CGPoint) {
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            let len = hypot(dx, dy)
+            guard len > 2 else { return }
+            let px = -dy / len
+            let py = dx / len
+            let halfWidth = min(7, max(3.5, len * 0.06))
+            let segments = max(4, Int(len / 12))
+
+            var left: [CGPoint] = []
+            var right: [CGPoint] = []
+            left.reserveCapacity(segments + 1)
+            right.reserveCapacity(segments + 1)
+            for i in 0...segments {
+                let t = CGFloat(i) / CGFloat(segments)
+                let cx = a.x + dx * t
+                let cy = a.y + dy * t
+                // Slight mid-bone bulge so the net reads as a volume.
+                let w = halfWidth * (0.55 + 0.45 * sin(.pi * t))
+                left.append(CGPoint(x: cx + px * w, y: cy + py * w))
+                right.append(CGPoint(x: cx - px * w, y: cy - py * w))
+            }
+
+            for i in 0..<segments {
+                path.move(to: left[i]); path.addLine(to: left[i + 1])
+                path.move(to: right[i]); path.addLine(to: right[i + 1])
+                path.move(to: left[i]); path.addLine(to: right[i])
+                path.move(to: left[i]); path.addLine(to: right[i + 1])
+                path.move(to: right[i]); path.addLine(to: left[i + 1])
+            }
+            path.move(to: left[segments]); path.addLine(to: right[segments])
+            // Center spine (matches face mesh density on long spans).
+            path.move(to: a); path.addLine(to: b)
+        }
+
+        /// Small diamond + cross at each joint — vertex nodes in the net.
+        private static func appendJointNode(to path: UIBezierPath, at c: CGPoint) {
+            let r: CGFloat = 3.5
+            path.move(to: CGPoint(x: c.x, y: c.y - r))
+            path.addLine(to: CGPoint(x: c.x + r, y: c.y))
+            path.addLine(to: CGPoint(x: c.x, y: c.y + r))
+            path.addLine(to: CGPoint(x: c.x - r, y: c.y))
+            path.close()
+            path.move(to: CGPoint(x: c.x - r, y: c.y))
+            path.addLine(to: CGPoint(x: c.x + r, y: c.y))
+            path.move(to: CGPoint(x: c.x, y: c.y - r))
+            path.addLine(to: CGPoint(x: c.x, y: c.y + r))
         }
 
         func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
