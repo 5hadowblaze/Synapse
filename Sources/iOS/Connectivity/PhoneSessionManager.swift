@@ -5,7 +5,18 @@ import WatchConnectivity
 @Observable
 @MainActor
 final class PhoneSessionManager: NSObject {
+    /// Raw `WCSession.isReachable` (interactive messaging available right now).
     var isReachable = false
+    var isPaired = false
+    var isWatchAppInstalled = false
+    var isActivated = false
+    /// UI-facing: paired Watch app is active and reachable, or we got traffic in the last ~20s.
+    private(set) var isConnected = false
+    /// Activated + paired + Watch app installed — safe to queue calibrate / live-direction via transfer.
+    var canMessageWatch: Bool {
+        isActivated && isPaired && isWatchAppInstalled
+    }
+
     var lastSyncOffsetMs: Double?
     var lastSyncRttMs: Double?
     var lastStrike: StrikeEvent?
@@ -13,6 +24,8 @@ final class PhoneSessionManager: NSObject {
     /// Latest Watch workout heart rate (BPM).
     var lastHeartRateBpm: Double?
     var lastHeartRateEvent: HeartRateEvent?
+    /// Wall-clock time the last Watch HR sample arrived (for “Measured Xs ago”).
+    var lastHeartRateReceivedAt: Date?
     /// Latest Focus stillness energy (0…1).
     var lastMotionEnergy: Double?
 
@@ -28,6 +41,10 @@ final class PhoneSessionManager: NSObject {
     var lastCalibrateSuccess: Bool?
 
     private let session: WCSession
+    /// Inbound WC traffic proves a live link even if `isReachable` briefly flickers false.
+    private var lastInboundAt: Date?
+    private var connectivityExpiryTask: Task<Void, Never>?
+    private static let recentContactSeconds: TimeInterval = 20
 
     override init() {
         self.session = WCSession.default
@@ -38,6 +55,12 @@ final class PhoneSessionManager: NSObject {
         }
         session.delegate = self
         session.activate()
+    }
+
+    /// Re-read WCSession flags (call on foreground / opening Kinetic).
+    func refreshSessionState() {
+        guard WCSession.isSupported() else { return }
+        syncFlags(from: session, updateStatus: false)
     }
 
     func sendBreakPointHaptic() {
@@ -191,6 +214,7 @@ final class PhoneSessionManager: NSObject {
         guard let event = HeartRateEvent.from(message: message) else { return }
         lastHeartRateEvent = event
         lastHeartRateBpm = event.bpm
+        lastHeartRateReceivedAt = Date()
         statusText = String(format: "HR %.0f bpm", event.bpm)
         onHeartRate?(event)
     }
@@ -208,6 +232,51 @@ final class PhoneSessionManager: NSObject {
         lastMotionEnergy = energy
         onMotionEnergy?(energy)
     }
+
+    private func noteInboundTraffic() {
+        lastInboundAt = Date()
+        syncFlags(from: session, updateStatus: true)
+        scheduleConnectivityExpiry()
+    }
+
+    private func hasRecentInbound() -> Bool {
+        guard let last = lastInboundAt else { return false }
+        return Date().timeIntervalSince(last) < Self.recentContactSeconds
+    }
+
+    private func syncFlags(from session: WCSession, updateStatus: Bool) {
+        let previous = isConnected
+        isPaired = session.isPaired
+        isWatchAppInstalled = session.isWatchAppInstalled
+        isActivated = session.activationState == .activated
+        isReachable = session.isReachable
+
+        isConnected = isActivated && isPaired && isWatchAppInstalled
+            && (isReachable || hasRecentInbound())
+
+        guard updateStatus, isConnected != previous else { return }
+        if isConnected {
+            statusText = isReachable ? "Watch reachable" : "Watch linked"
+        } else if !isPaired {
+            statusText = "No paired Watch"
+        } else if !isWatchAppInstalled {
+            statusText = "Watch app not installed"
+        } else if !isActivated {
+            statusText = "Watch session inactive"
+        } else {
+            statusText = "Watch unreachable"
+        }
+    }
+
+    private func scheduleConnectivityExpiry() {
+        connectivityExpiryTask?.cancel()
+        connectivityExpiryTask = Task { @MainActor [weak self] in
+            let ns = UInt64((Self.recentContactSeconds + 0.25) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: ns)
+            guard let self, !Task.isCancelled else { return }
+            self.syncFlags(from: self.session, updateStatus: true)
+        }
+    }
 }
 
 extension PhoneSessionManager: WCSessionDelegate {
@@ -219,9 +288,16 @@ extension PhoneSessionManager: WCSessionDelegate {
         Task { @MainActor in
             if let error {
                 statusText = "WC activate error: \(error.localizedDescription)"
+                isActivated = false
+                isConnected = false
+                isReachable = false
             } else {
-                isReachable = session.isReachable
-                statusText = activationState == .activated ? "Watch session active" : "Watch session inactive"
+                syncFlags(from: session, updateStatus: false)
+                if activationState == .activated {
+                    statusText = isConnected ? "Watch session active" : "Watch session inactive"
+                } else {
+                    statusText = "Watch session inactive"
+                }
             }
         }
     }
@@ -233,13 +309,19 @@ extension PhoneSessionManager: WCSessionDelegate {
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         Task { @MainActor in
-            isReachable = session.isReachable
-            statusText = session.isReachable ? "Watch reachable" : "Watch unreachable"
+            syncFlags(from: session, updateStatus: true)
+        }
+    }
+
+    nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
+        Task { @MainActor in
+            syncFlags(from: session, updateStatus: true)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         Task { @MainActor in
+            noteInboundTraffic()
             guard let type = message[WCMessageKey.type] as? String else { return }
             switch type {
             case WCMessageKey.strike:
@@ -268,6 +350,7 @@ extension PhoneSessionManager: WCSessionDelegate {
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
         Task { @MainActor in
+            noteInboundTraffic()
             guard let type = message[WCMessageKey.type] as? String else {
                 replyHandler([:])
                 return
@@ -295,6 +378,7 @@ extension PhoneSessionManager: WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         Task { @MainActor in
+            noteInboundTraffic()
             guard let type = userInfo[WCMessageKey.type] as? String else { return }
             switch type {
             case WCMessageKey.strike:

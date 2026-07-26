@@ -11,7 +11,10 @@ import {
 import { buildDemoSnapshot } from '../data/demoSession'
 import { DEFAULT_SESSION_ID, getDb, isFirebaseConfigured } from '../lib/firebase'
 import type {
+  FocusEpoch,
+  FocusPhase,
   GazeWindow,
+  ParsedModule,
   Session,
   SessionModule,
   SessionSnapshot,
@@ -33,13 +36,46 @@ function asNullableBool(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null
 }
 
-function parseModule(data: Record<string, unknown>): SessionModule {
-  if (data.module === 'kineticClock' || data.module === 'visionPvt') {
-    return data.module
+/** Values the phone has written historically, plus tolerated shorthands. */
+const MODULE_ALIASES: Record<string, SessionModule> = {
+  focusdesk: 'focusDesk',
+  focus: 'focusDesk',
+  kineticclock: 'kineticClock',
+  kinetic: 'kineticClock',
+  clock: 'kineticClock',
+  visionpvt: 'visionPvt',
+  vision: 'visionPvt',
+  pvt: 'visionPvt',
+}
+
+/**
+ * Never guesses. An unrecognized `module` resolves to `unknown` so the HUD can
+ * say so, rather than rendering Focus data through the Vision PVT view.
+ */
+function parseModule(data: Record<string, unknown>): {
+  module: ParsedModule
+  moduleRaw: string | null
+} {
+  const raw = typeof data.module === 'string' ? data.module : null
+  if (raw == null) {
+    console.warn('[synapse] Session doc has no `module` field — cannot pick a view.')
+    return { module: 'unknown', moduleRaw: null }
   }
-  // Infer from trial-shaped hints on the session doc, else default vision.
-  if (data.module === 'kinetic' || data.module === 'clock') return 'kineticClock'
-  return 'visionPvt'
+  const mapped = MODULE_ALIASES[raw.toLowerCase()]
+  if (mapped) return { module: mapped, moduleRaw: raw }
+  console.warn(
+    `[synapse] Unrecognized session module "${raw}". Known: focusDesk, visionPvt, kineticClock.`,
+  )
+  return { module: 'unknown', moduleRaw: raw }
+}
+
+const FOCUS_PHASES: FocusPhase[] = ['idle', 'focus', 'fade', 'break', 'done']
+
+function parseFocusPhase(value: unknown): { phase: FocusPhase; phaseRaw: string | null } {
+  if (typeof value !== 'string') return { phase: 'unknown', phaseRaw: null }
+  const lower = value.toLowerCase() as FocusPhase
+  if (FOCUS_PHASES.includes(lower)) return { phase: lower, phaseRaw: value }
+  return { phase: 'unknown', phaseRaw: value }
 }
 
 function parseSession(id: string, data: Record<string, unknown>): Session {
@@ -56,10 +92,13 @@ function parseSession(id: string, data: Record<string, unknown>): Session {
     startedAt = (startedAtRaw as { toMillis: () => number }).toMillis()
   }
 
+  const { module, moduleRaw } = parseModule(data)
+
   return {
     id,
     athleteId: typeof data.athleteId === 'string' ? data.athleteId : 'unknown',
-    module: parseModule(data),
+    module,
+    moduleRaw,
     startedAt,
     status: data.status === 'complete' ? 'complete' : 'active',
     clockOffsetMs: asNumber(data.clockOffsetMs),
@@ -74,7 +113,34 @@ function parseSession(id: string, data: Record<string, unknown>): Session {
       typeof data.lastHeartRateSource === 'string'
         ? data.lastHeartRateSource
         : null,
+    lastHeartRateHkStart: asNullableNumber(data.lastHeartRateHkStart),
+    lastHeartRateHkEnd: asNullableNumber(data.lastHeartRateHkEnd),
+    lastHeartRateReceivedAtMs: asNullableNumber(data.lastHeartRateReceivedAtMs),
+    lastEpochIndex: asNullableNumber(data.lastEpochIndex),
+    lastEpochAtMs: asNullableNumber(data.lastEpochAtMs),
+    lastEpochPhase: typeof data.lastEpochPhase === 'string' ? data.lastEpochPhase : null,
+    focusFocusedSeconds: asNullableNumber(data.focusFocusedSeconds),
+    focusBreakSeconds: asNullableNumber(data.focusBreakSeconds),
+    focusFadeCount: asNullableNumber(data.focusFadeCount),
+    focusMeanHrBpm: asNullableNumber(data.focusMeanHrBpm),
+    focusExtendedOnce: asNullableBool(data.focusExtendedOnce),
+    focusBaselineReady: asNullableBool(data.focusBaselineReady),
+    pvtPreMedianMs: asNullableNumber(data.pvtPreMedianMs),
+    pvtPreLapses: asNullableNumber(data.pvtPreLapses),
+    pvtPreValidTrials: asNullableNumber(data.pvtPreValidTrials),
+    pvtPostMedianMs: asNullableNumber(data.pvtPostMedianMs),
+    pvtPostLapses: asNullableNumber(data.pvtPostLapses),
+    pvtPostValidTrials: asNullableNumber(data.pvtPostValidTrials),
+    pvtMedianDeltaMs: asNullableNumber(data.pvtMedianDeltaMs),
+    pvtPercentChange: asNullableNumber(data.pvtPercentChange),
+    pvtLapseDelta: asNullableNumber(data.pvtLapseDelta),
+    pvtDirection: parsePvtDirection(data.pvtDirection),
   }
+}
+
+function parsePvtDirection(value: unknown): Session['pvtDirection'] {
+  if (value === 'slower' || value === 'faster' || value === 'steady') return value
+  return null
 }
 
 function parseTrial(id: string, data: Record<string, unknown>): Trial {
@@ -96,6 +162,23 @@ function parseTrial(id: string, data: Record<string, unknown>): Trial {
     peakG: asNullableNumber(data.peakG),
     arousalIndex: asNullableNumber(data.arousalIndex),
     valid: data.valid !== false,
+  }
+}
+
+/** sessions/{id}/epochs/{index} — written by SessionWriter.writeFocusEpoch. */
+function parseEpoch(id: string, data: Record<string, unknown>): FocusEpoch {
+  const { phase, phaseRaw } = parseFocusPhase(data.phase)
+  return {
+    id,
+    index: asNumber(data.index, Number.parseInt(id, 10) || 0),
+    phase,
+    phaseRaw,
+    remainingMs: asNullableNumber(data.remainingMs),
+    fadeScore: asNullableNumber(data.fadeScore),
+    hrBpm: asNullableNumber(data.hrBpm),
+    arousalIndex: asNullableNumber(data.arousalIndex),
+    motionEnergy: asNullableNumber(data.motionEnergy),
+    fadeSuggested: data.fadeSuggested === true,
   }
 }
 
@@ -147,23 +230,29 @@ export interface UseSessionResult {
   isDemoForced: boolean
 }
 
-export function useSession(initialId = DEFAULT_SESSION_ID): UseSessionResult {
+export function useSession(
+  initialId = DEFAULT_SESSION_ID,
+  initialDemoModule: SessionModule | null = null,
+): UseSessionResult {
   const [sessionId, setSessionId] = useState(initialId)
-  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null)
-  const [mode, setMode] = useState<DataMode>('connecting')
+  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(() =>
+    initialDemoModule ? buildDemoSnapshot(initialDemoModule) : null,
+  )
+  const [mode, setMode] = useState<DataMode>(initialDemoModule ? 'demo' : 'connecting')
   const [error, setError] = useState<string | null>(null)
-  const [isDemoForced, setIsDemoForced] = useState(false)
+  const [isDemoForced, setIsDemoForced] = useState(initialDemoModule != null)
   const trialsRef = useRef<Map<string, TrialWithGaze>>(new Map())
+  const epochsRef = useRef<FocusEpoch[]>([])
   const sessionRef = useRef<Session | null>(null)
   const unsubRef = useRef<Unsubscribe[]>([])
 
   const publish = useCallback(() => {
     if (!sessionRef.current) return
     const trials = [...trialsRef.current.values()].sort((a, b) => a.index - b.index)
-    setSnapshot({ session: sessionRef.current, trials })
+    setSnapshot({ session: sessionRef.current, trials, epochs: epochsRef.current })
   }, [])
 
-  const forceDemo = useCallback((module: SessionModule = 'visionPvt') => {
+  const forceDemo = useCallback((module: SessionModule = 'focusDesk') => {
     setIsDemoForced(true)
     setError(null)
     setMode('demo')
@@ -180,6 +269,7 @@ export function useSession(initialId = DEFAULT_SESSION_ID): UseSessionResult {
     unsubRef.current.forEach((u) => u())
     unsubRef.current = []
     trialsRef.current = new Map()
+    epochsRef.current = []
     sessionRef.current = null
     setSnapshot(null)
     setError(null)
@@ -225,9 +315,14 @@ export function useSession(initialId = DEFAULT_SESSION_ID): UseSessionResult {
         }
         gotSession = true
         window.clearTimeout(fallbackTimer)
-        sessionRef.current = parseSession(docSnap.id, docSnap.data() as Record<string, unknown>)
+        const parsed = parseSession(docSnap.id, docSnap.data() as Record<string, unknown>)
+        sessionRef.current = parsed
         setMode('live')
-        setError(null)
+        setError(
+          parsed.module === 'unknown'
+            ? `Session "${sessionId}" reports module "${parsed.moduleRaw ?? 'missing'}" — no view for it.`
+            : null,
+        )
         publish()
       },
       (err) => {
@@ -275,7 +370,26 @@ export function useSession(initialId = DEFAULT_SESSION_ID): UseSessionResult {
       },
     )
 
-    unsubRef.current = [sessionUnsub, trialsUnsub]
+    // Focus epochs (empty for lab modules — the collection simply won't exist).
+    const epochsUnsub = onSnapshot(
+      query(collection(db, 'sessions', sessionId, 'epochs'), orderBy('index', 'asc')),
+      (qs) => {
+        if (cancelled) return
+        epochsRef.current = qs.docs
+          .map((d) => parseEpoch(d.id, d.data() as Record<string, unknown>))
+          .sort((a, b) => a.index - b.index)
+        if (sessionRef.current) {
+          setMode('live')
+          publish()
+        }
+      },
+      (err) => {
+        if (cancelled) return
+        setError(err.message)
+      },
+    )
+
+    unsubRef.current = [sessionUnsub, trialsUnsub, epochsUnsub]
 
     return () => {
       cancelled = true

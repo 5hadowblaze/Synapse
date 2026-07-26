@@ -10,12 +10,15 @@ struct ClockFaceView: View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
             let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-            let radius = side * 0.42
+            // Keep pad disks (up to 36pt when active) inside the view bounds.
+            let padAllowance: CGFloat = 20
+            let radius = max(0, side * 0.5 - padAllowance)
 
             ZStack {
                 Circle()
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 2)
-                    .frame(width: side * 0.92, height: side * 0.92)
+                    .frame(width: radius * 2, height: radius * 2)
+                    .position(center)
 
                 ForEach(ClockOctant.allCases, id: \.rawValue) { octant in
                     let isActive = activeOctant == octant.rawValue
@@ -37,6 +40,7 @@ struct ClockFaceView: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .aspectRatio(1, contentMode: .fit)
+        .padding(8)
     }
 
     private func spoke(

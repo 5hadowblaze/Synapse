@@ -10,16 +10,71 @@ enum FocusPhase: Equatable, Sendable {
 
 struct FocusPreset: Equatable, Sendable, Identifiable {
     let id: String
-    let title: String
+    /// Human name shown above the minutes ("Classic", "Deep", "Quick").
+    let name: String
     let focusMinutes: Int
     let breakMinutes: Int
+    /// Fade-baseline samples this preset needs before a break can be suggested.
+    /// Short blocks calibrate on fewer samples so the fade signal is usable inside the block.
+    let baselineSamples: Int
+    let note: String
 
-    static let standard = FocusPreset(id: "25-5", title: "25 / 5", focusMinutes: 25, breakMinutes: 5)
-    static let short = FocusPreset(id: "15-5", title: "15 / 5", focusMinutes: 15, breakMinutes: 5)
-    static let deep = FocusPreset(id: "50-10", title: "50 / 10", focusMinutes: 50, breakMinutes: 10)
-    static let demo = FocusPreset(id: "2-1", title: "Demo 2 / 1", focusMinutes: 2, breakMinutes: 1)
+    var title: String { "\(focusMinutes) / \(breakMinutes)" }
 
-    static let all: [FocusPreset] = [.standard, .short, .deep, .demo]
+    /// True when the block reaches a usable baseline in well under a minute.
+    var calibratesFast: Bool { baselineSamples < FocusFadeDetector.defaultBaselineSamples }
+
+    /// Rough seconds until the fade baseline is ready on this preset.
+    var baselineSeconds: Int {
+        Int(Double(baselineSamples) * FocusFadeDetector.defaultSampleIntervalSeconds)
+    }
+
+    static let standard = FocusPreset(
+        id: "25-5",
+        name: "Classic",
+        focusMinutes: 25,
+        breakMinutes: 5,
+        baselineSamples: FocusFadeDetector.defaultBaselineSamples,
+        note: "The default Pomodoro, with fade watching underneath."
+    )
+    static let short = FocusPreset(
+        id: "15-5",
+        name: "Short",
+        focusMinutes: 15,
+        breakMinutes: 5,
+        baselineSamples: FocusFadeDetector.defaultBaselineSamples,
+        note: "One tight pass at a single task."
+    )
+    static let deep = FocusPreset(
+        id: "50-10",
+        name: "Deep",
+        focusMinutes: 50,
+        breakMinutes: 10,
+        baselineSamples: FocusFadeDetector.defaultBaselineSamples,
+        note: "Long block for work that needs a running start."
+    )
+    /// Short sprint that reaches a fade baseline in ~30 s — the block to open on when
+    /// you want the fade signal live almost immediately.
+    static let quick = FocusPreset(
+        id: "5-1",
+        name: "Quick",
+        focusMinutes: 5,
+        breakMinutes: 1,
+        baselineSamples: FocusFadeDetector.quickBaselineSamples,
+        note: "Sprint block. Reads your baseline in about 30 seconds."
+    )
+    /// Hidden behind Settings — same fast calibration as Quick, compressed for a stage run.
+    static let demo = FocusPreset(
+        id: "2-1",
+        name: "Demo",
+        focusMinutes: 2,
+        breakMinutes: 1,
+        baselineSamples: FocusFadeDetector.quickBaselineSamples,
+        note: "Stage timing only. Two-minute block, one-minute break."
+    )
+
+    static let all: [FocusPreset] = [.standard, .short, .deep, .quick]
+    static let allIncludingDemo: [FocusPreset] = all + [.demo]
 }
 
 struct FocusEpochSnapshot: Equatable, Sendable {
@@ -48,6 +103,24 @@ struct FocusRecap: Equatable, Sendable {
     }
 }
 
+/// Three legible states the Focus HUD can show, in escalation order.
+/// Deliberately calm: `easing` is an observation, not a warning.
+///
+/// There is deliberately no absolute score threshold here. The composite fade score is
+/// session-relative — its resting value depends on which channels calibrated and how
+/// noisy they were — so any fixed cut point drifts out of order with the fade threshold
+/// as the scoring changes underneath it. `FocusFadeDetector.easingThreshold` sits at the
+/// midpoint between this session's baseline mean and its own fade threshold, which keeps
+/// the three states in escalation order by construction.
+enum FocusSignalState: Equatable, Sendable {
+    /// Signals are holding near your baseline.
+    case steady
+    /// Fade score is drifting up but has not crossed the break threshold.
+    case easing
+    /// Threshold crossed — Synapse is asking for a break.
+    case breakSuggested
+}
+
 /// Desk Focus: timed Pomodoro with soft fade suggestions (not Vision/Kinetic trials).
 @Observable
 @MainActor
@@ -57,6 +130,8 @@ final class FocusEngine {
     var isPaused = false
     var focusMinutes = FocusPreset.standard.focusMinutes
     var breakMinutes = FocusPreset.standard.breakMinutes
+    /// Fade-baseline samples for the next / current block (set from the chosen preset).
+    var baselineSamples = FocusPreset.standard.baselineSamples
     var remainingSeconds: TimeInterval = 0
     var fadeScore: Double?
     var fadeSuggested = false
@@ -64,14 +139,31 @@ final class FocusEngine {
     var didExtend = false
     var statusText = "Ready"
     var baselineReady = false
+    /// 0…1 progress toward a usable fade baseline.
+    var baselineProgress: Double = 0
+    /// True once the sample window is full but the detector is still holding out for a
+    /// settled heart rate. Progress stops climbing here, so the HUD needs to say why.
+    var isSettlingBaseline = false
+    /// Session-relative score above which the HUD reads `easing`. Nil until calibrated.
+    var fadeEasingThreshold: Double?
+    /// 0…1 from the baseline mean toward the fade threshold. Drives the HUD ring, which
+    /// the raw score cannot: at rest the score sits near 0.01–0.05 and would look dead.
+    var fadeProgress: Double?
     var lastHrBpm: Double?
     var lastArousal: Float?
     var lastMotionEnergy: Double?
     var epochIndex = 0
+    /// Session HR reference used by the fade detector (and brief-mode HR spike wake).
+    var hrAnchorBpm: Double? { fadeDetector.currentHrAnchor }
+
+    /// No arousal update for this long means the face is gone, not that it stopped moving.
+    /// Gaze arrives at frame rate while tracking, so this only trips on a real loss.
+    static let arousalStaleAfter: TimeInterval = 8
 
     private(set) var focusedElapsed: TimeInterval = 0
     private(set) var breakElapsed: TimeInterval = 0
     private var hrSamples: [Double] = []
+    private var lastArousalAt: TimeInterval?
 
     private var fadeDetector = FocusFadeDetector()
     private var tickTask: Task<Void, Never>?
@@ -95,30 +187,53 @@ final class FocusEngine {
         }
     }
 
+    /// Three-state read for the HUD. `easing` sits between a calm block and a break request.
+    /// The middle state is only claimable once the session has a baseline to be relative to.
+    var signalState: FocusSignalState {
+        if fadeSuggested || phase == .breakSuggested { return .breakSuggested }
+        guard baselineReady, let score = fadeScore, let easing = fadeEasingThreshold else {
+            return .steady
+        }
+        return score > easing ? .easing : .steady
+    }
+
     func configure(preset: FocusPreset) {
         focusMinutes = preset.focusMinutes
         breakMinutes = preset.breakMinutes
+        baselineSamples = preset.baselineSamples
     }
 
-    func configure(focusMinutes: Int, breakMinutes: Int) {
+    func configure(focusMinutes: Int, breakMinutes: Int, baselineSamples: Int? = nil) {
         self.focusMinutes = max(1, focusMinutes)
         self.breakMinutes = max(1, breakMinutes)
+        self.baselineSamples = baselineSamples ?? Self.inferredBaselineSamples(focusMinutes: self.focusMinutes)
+    }
+
+    /// Voice / lock-in paths pass raw minutes with no preset — keep short blocks usable.
+    static func inferredBaselineSamples(focusMinutes: Int) -> Int {
+        focusMinutes <= FocusPreset.quick.focusMinutes
+            ? FocusFadeDetector.quickBaselineSamples
+            : FocusFadeDetector.defaultBaselineSamples
     }
 
     func startSession(
         focusMinutes: Int? = nil,
         breakMinutes: Int? = nil,
+        baselineSamples: Int? = nil,
         fadeDetector: FocusFadeDetector? = nil
     ) {
         stopSession(emitComplete: false)
         if let focusMinutes { self.focusMinutes = max(1, focusMinutes) }
         if let breakMinutes { self.breakMinutes = max(1, breakMinutes) }
+        if let baselineSamples {
+            self.baselineSamples = max(2, baselineSamples)
+        } else if focusMinutes != nil {
+            self.baselineSamples = Self.inferredBaselineSamples(focusMinutes: self.focusMinutes)
+        }
         if let fadeDetector {
             self.fadeDetector = fadeDetector
         } else {
-            // Demo blocks: shorten baseline so fade can fire within the block.
-            let samples = self.focusMinutes <= 3 ? 4 : FocusFadeDetector.defaultBaselineSamples
-            self.fadeDetector = FocusFadeDetector(baselineSamples: samples)
+            self.fadeDetector = FocusFadeDetector(baselineSamples: self.baselineSamples)
         }
         self.fadeDetector.reset()
 
@@ -133,6 +248,12 @@ final class FocusEngine {
         fadeCount = 0
         didExtend = false
         baselineReady = false
+        baselineProgress = 0
+        isSettlingBaseline = false
+        fadeEasingThreshold = nil
+        fadeProgress = nil
+        lastArousal = nil
+        lastArousalAt = nil
         epochIndex = 0
         isPaused = false
         isRunning = true
@@ -183,7 +304,8 @@ final class FocusEngine {
         phase = .breakSuggested
         fadeSuggested = true
         fadeCount = fadeDetector.fadeCount
-        statusText = "Fade detected — take a break?"
+        // Soft nudge only — timer still completes if the user dismisses or ignores.
+        statusText = "Break suggested — take a pause?"
         onFadeSuggested?()
     }
 
@@ -248,9 +370,13 @@ final class FocusEngine {
         evaluateFade()
     }
 
-    func ingestArousal(_ value: Float) {
+    /// Nil means the face was lost. It must propagate: the detector drops the arousal
+    /// channel and renormalises the remaining weights, which is a truthful "we cannot see
+    /// you" rather than a fade score built on a reading frozen at look-away time.
+    func ingestArousal(_ value: Float?) {
         guard isRunning else { return }
         lastArousal = value
+        lastArousalAt = value == nil ? nil : ProcessInfo.processInfo.systemUptime
         evaluateFade()
     }
 
@@ -280,6 +406,7 @@ final class FocusEngine {
         guard phase == .focusing || phase == .breakSuggested else { return }
         guard !isPaused else { return }
         let now = ProcessInfo.processInfo.systemUptime
+        expireStaleArousal(now: now)
         let fired = fadeDetector.ingest(
             now: now,
             hrBpm: lastHrBpm,
@@ -287,6 +414,11 @@ final class FocusEngine {
             motionEnergy: lastMotionEnergy
         )
         fadeScore = fadeDetector.lastScore
+        baselineProgress = fadeDetector.baselineProgress
+        fadeEasingThreshold = fadeDetector.easingThreshold
+        fadeProgress = fadeDetector.fadeProgress
+        isSettlingBaseline = !fadeDetector.isBaselineReady
+            && fadeDetector.baselineSampleCount >= fadeDetector.baselineCapacity
         if fadeDetector.isBaselineReady, !baselineReady {
             baselineReady = true
             if let mean = fadeDetector.baselineMean, let std = fadeDetector.baselineStd {
@@ -296,6 +428,21 @@ final class FocusEngine {
         if fired {
             fadeCount = fadeDetector.fadeCount
             noteFadeSuggested()
+        }
+    }
+
+    /// Gaze callbacks stop entirely if the face anchor is dropped, so the last nil may
+    /// never arrive. Age the value out rather than trusting the loss to be announced.
+    /// Internal so tests can drive it with an explicit clock.
+    func expireStaleArousal(now: TimeInterval) {
+        guard lastArousal != nil else { return }
+        guard let seenAt = lastArousalAt else {
+            lastArousal = nil
+            return
+        }
+        if now - seenAt > Self.arousalStaleAfter {
+            lastArousal = nil
+            lastArousalAt = nil
         }
     }
 

@@ -1,0 +1,46 @@
+{
+  "$schema": "clawd-pet-animation-spec/v1",
+  "pet": {
+    "id": "clawd",
+    "displayName": "Clawd",
+    "description": "A blocky coral pixel-art crab mascot with two tall black rectangular eyes, flat horizontal side claws, and short stubby legs."
+  },
+  "spritesheet": {
+    "file": "assets/spritesheet.webp",
+    "alt_file": "assets/spritesheet.png",
+    "width": 1536,
+    "height": 1872,
+    "format": "RGBA",
+    "background": "transparent",
+    "note": "The chroma-key background has already been removed. The alpha channel is the transparency mask. Do NOT color-key again."
+  },
+  "grid": {
+    "columns": 8,
+    "rows": 9,
+    "cell_width": 192,
+    "cell_height": 208,
+    "layout": "row-major",
+    "frame_rect_formula": {
+      "x": "column * cell_width",
+      "y": "row * cell_height",
+      "w": "cell_width",
+      "h": "cell_height"
+    },
+    "note": "Each animation is one row. Read the first N cells left-to-right where N = frames for that state. Cells beyond a state's frame count are fully transparent and must be ignored."
+  },
+  "playback": {
+    "recommended_default_fps": 10,
+    "loop_default": true
+  },
+  "states": [
+    { "state": "idle",          "row": 0, "frames": 6, "fps": 6,  "loop": true,  "purpose": "Calm resting, breathing, and blinking loop. Default state." },
+    { "state": "running-right", "row": 1, "frames": 8, "fps": 12, "loop": true,  "purpose": "Rightward drag/travel movement loop; faces and moves right." },
+    { "state": "running-left",  "row": 2, "frames": 8, "fps": 12, "loop": true,  "purpose": "Leftward drag/travel movement loop; faces and moves left (mirror of running-right)." },
+    { "state": "waving",        "row": 3, "frames": 4, "fps": 8,  "loop": true,  "purpose": "Greeting or attention gesture." },
+    { "state": "jumping",       "row": 4, "frames": 5, "fps": 10, "loop": false, "purpose": "Hover or playful jump; play once then return to idle." },
+    { "state": "failed",        "row": 5, "frames": 8, "fps": 10, "loop": false, "purpose": "Blocked, failed, or cancelled reaction; play once." },
+    { "state": "waiting",       "row": 6, "frames": 6, "fps": 6,  "loop": true,  "purpose": "Waiting for approval, help, or user input; expectant asking pose." },
+    { "state": "running",       "row": 7, "frames": 6, "fps": 8,  "loop": true,  "purpose": "Active task work or processing (thinking/working, NOT literal foot-running)." },
+    { "state": "review",        "row": 8, "frames": 6, "fps": 8,  "loop": true,  "purpose": "Ready or completed output review; focused lean." }
+  ]
+}

@@ -18,7 +18,7 @@ final class FaceTracker: NSObject {
     /// Face-space look-at and mid-eye for preview / mapper (updated each tracked frame).
     var latestLookAt = SIMD3<Float>(0, 0, -1)
     var latestMidEye = SIMD3<Float>(0, 0, 0)
-    /// Face anchor translation in camera space (meters) — used for Batak clock parallax.
+    /// Face anchor translation in camera space (meters) — used for Kinetic framing prompts.
     var facePositionCamera: SIMD3<Float>?
     /// Approximate camera-to-face distance in meters from face transform translation.
     var estimatedDistanceMeters: Float?
@@ -40,10 +40,22 @@ final class FaceTracker: NSObject {
     /// Which athlete arm to draw / use for octant (default right).
     private(set) var preferredArmSide: KineticArmSide = .right
 
+    // MARK: Front-camera posture (Vision on face frames)
+
+    var postureJoints: [PostureOverlayJoint] = []
+    var postureBones: [(CGPoint, CGPoint)] = []
+    var isPostureTracking = false
+    var postureStatusText = "Posture: idle"
+    var latestPostureFeatures: PostureFeatures?
+    var onPostureFeatures: ((PostureFeatures?, [PostureOverlayJoint], [(CGPoint, CGPoint)]) -> Void)?
+
     private let saccadeDetector = SaccadeDetector()
     private let arousalIndexer = ArousalIndexer()
+    /// Temporary — nil unless SYNAPSE_AROUSAL_DIAG=1. Delete with `ArousalDiagnostics`.
+    private let arousalDiagnostics = ArousalDiagnostics.makeIfEnabled()
     private let armEstimator = FrontArmEstimator()
     private var armPoseEnabled = false
+    private var postureEnabled = false
 
     var lastSaccade: SaccadeOnset?
     var lastArousal: Float?
@@ -60,6 +72,7 @@ final class FaceTracker: NSObject {
         isSessionRunning = true
         saccadeDetector.reset()
         arousalIndexer.reset()
+        arousalDiagnostics?.begin()
         statusText = "Face tracking started"
     }
 
@@ -89,12 +102,14 @@ final class FaceTracker: NSObject {
     }
 
     func stop() {
+        arousalDiagnostics?.finish()
         session.pause()
         isSessionRunning = false
         isTracking = false
         facePositionCamera = nil
         estimatedDistanceMeters = nil
         clearArmState()
+        clearPostureState()
         statusText = "Face tracking stopped"
     }
 
@@ -104,6 +119,15 @@ final class FaceTracker: NSObject {
             clearArmState()
         } else {
             armStatusText = "Arm: seeking"
+        }
+    }
+
+    func setPostureEnabled(_ enabled: Bool) {
+        postureEnabled = enabled
+        if !enabled {
+            clearPostureState()
+        } else {
+            postureStatusText = "Posture: seeking"
         }
     }
 
@@ -117,9 +141,12 @@ final class FaceTracker: NSObject {
     func resetDetectors() {
         saccadeDetector.reset()
         arousalIndexer.reset()
+        arousalDiagnostics?.begin()
         lastSaccade = nil
         lastArousal = nil
     }
+
+    private var bodyPoseEnabled: Bool { armPoseEnabled || postureEnabled }
 
     private func clearArmState() {
         armOctant = nil
@@ -130,6 +157,15 @@ final class FaceTracker: NSObject {
         onArmOctant?(nil)
     }
 
+    private func clearPostureState() {
+        postureJoints = []
+        postureBones = []
+        isPostureTracking = false
+        latestPostureFeatures = nil
+        postureStatusText = "Posture: idle"
+        onPostureFeatures?(nil, [], [])
+    }
+
     private func ingestArm(_ result: FrontArmEstimator.Result) {
         armOctant = result.octant
         isArmTracking = result.isTracking
@@ -137,6 +173,19 @@ final class FaceTracker: NSObject {
         armBones = result.bones
         armStatusText = result.statusText
         onArmOctant?(result.octant)
+    }
+
+    private func ingestPosture(
+        features: PostureFeatures?,
+        joints: [PostureOverlayJoint],
+        bones: [(CGPoint, CGPoint)]
+    ) {
+        latestPostureFeatures = features
+        postureJoints = joints
+        postureBones = bones
+        isPostureTracking = features != nil
+        postureStatusText = features != nil ? "Posture tracked" : "Posture: seek torso"
+        onPostureFeatures?(features, joints, bones)
     }
 }
 
@@ -193,22 +242,48 @@ extension FaceTracker: ARSessionDelegate {
                     )
                 }
             }
-            if let arousal = self.arousalIndexer.update(sample) {
+            let arousal = self.arousalIndexer.update(sample)
+            if !face.isTracked {
+                // Face lost: publish nothing rather than holding the last good reading, so
+                // consumers see the gap instead of a stale value frozen at look-away time.
+                self.lastArousal = nil
+            } else if let arousal {
                 self.lastArousal = arousal
             }
+            self.arousalDiagnostics?.record(sample: sample, acceptedValue: arousal)
             self.onGaze?(sample)
         }
     }
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        // Arm pose runs on the shared front face session when Kinetic enables it.
+        // Shared Vision body-pose pass for Kinetic arm + Posture Check.
         Task { @MainActor in
-            guard self.armPoseEnabled else { return }
+            guard self.bodyPoseEnabled else { return }
             let buffer = frame.capturedImage
             let side = self.preferredArmSide
-            self.armEstimator.process(pixelBuffer: buffer, orientation: .right, side: side) { [weak self] result in
+            let needArm = self.armPoseEnabled
+            let needPosture = self.postureEnabled
+            let faceDistance = self.estimatedDistanceMeters.map(Double.init)
+            self.armEstimator.processFrame(
+                pixelBuffer: buffer,
+                orientation: .right,
+                side: side,
+                needArm: needArm,
+                needPosture: needPosture,
+                faceDistanceMeters: faceDistance
+            ) { [weak self] frameResult in
                 Task { @MainActor in
-                    self?.ingestArm(result)
+                    guard let self else { return }
+                    if needArm, let arm = frameResult.arm {
+                        self.ingestArm(arm)
+                    }
+                    if needPosture {
+                        self.ingestPosture(
+                            features: frameResult.postureFeatures,
+                            joints: frameResult.postureJoints,
+                            bones: frameResult.postureBones
+                        )
+                    }
                 }
             }
         }

@@ -1,13 +1,81 @@
 import Foundation
 
+/// Session summary after Kinetic Clock stop/complete — numbers only, no wellness diagnosis.
+struct KineticRecap: Equatable, Sendable {
+    let trialCount: Int
+    let plannedTrials: Int
+    let medianMotorRtMs: Double?
+    let meanMotorRtMs: Double?
+    let motorSampleCount: Int
+    let spatialAccuracyPercent: Double?
+    let spatialMatchCount: Int
+    let spatialScoredCount: Int
+    let missCount: Int
+    let spatialMissCount: Int
+    let breakPointTrial: Int?
+    let baselineMeanMs: Double?
+    let baselineStdMs: Double?
+    /// True when the engine finished all planned trials; false when the user stopped early.
+    let completedNaturally: Bool
+
+    var medianLabel: String {
+        guard let medianMotorRtMs else { return "—" }
+        return "\(Int(medianMotorRtMs.rounded()))"
+    }
+
+    var meanLabel: String {
+        guard let meanMotorRtMs else { return "—" }
+        return "\(Int(meanMotorRtMs.rounded()))"
+    }
+
+    var accuracyLabel: String {
+        guard let spatialAccuracyPercent else { return "—" }
+        return String(format: "%.0f%%", spatialAccuracyPercent)
+    }
+
+    var trialsLabel: String {
+        "\(trialCount)/\(plannedTrials)"
+    }
+
+    /// Soft one-line for Clawd — reaction-time + accuracy, never a fatigue claim.
+    var voiceSummary: String {
+        var parts: [String] = ["Kinetic complete."]
+        if medianMotorRtMs != nil {
+            parts.append("Median punch \(medianLabel) milliseconds.")
+        }
+        if spatialAccuracyPercent != nil {
+            parts.append("Spatial accuracy \(accuracyLabel).")
+        }
+        if let bp = breakPointTrial {
+            parts.append("A shift from your baseline around trial \(bp + 1).")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[mid - 1] + sorted[mid]) / 2
+        }
+        return sorted[mid]
+    }
+
+    static func mean(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+}
+
 /// Eight-direction kinetic clock: watch strike timing always kept; spatialMatch flags accuracy.
 @Observable
 @MainActor
 final class KineticClockEngine {
     static let strikeTimeoutMs: Double = 1500
     static let interTrialDelayMs: Double = 800
-    /// 2 punches per octant by default.
-    static let defaultTrialCount = 16
+    /// Short demo length (was 16 = 2 punches per octant).
+    static let defaultTrialCount = 3
 
     var phase: TrialPhase = .idle
     var activeOctant: Int?
@@ -38,6 +106,9 @@ final class KineticClockEngine {
     var onBaselineReady: ((Double, Double) -> Void)?
     var onSessionComplete: (() -> Void)?
 
+    /// Planned trial count for the current (or last) session.
+    var plannedTrialCount: Int { maxTrials }
+
     func startSession(trialCount: Int? = nil) {
         stopSession()
         let count = trialCount ?? Self.defaultTrialCount
@@ -58,6 +129,35 @@ final class KineticClockEngine {
         statusText = "Kinetic Clock started"
         displayClock.start()
         scheduleNextTrial()
+    }
+
+    /// Snapshot of session outcomes. Safe after `stopSession` — trials are retained.
+    func makeRecap(completedNaturally: Bool) -> KineticRecap {
+        let motorRTs = trials.compactMap { trial -> Double? in
+            guard trial.strikeMs != nil, let rt = trial.motorRtMs else { return nil }
+            return rt
+        }
+        let scored = trials.filter { $0.strikeMs != nil && $0.spatialMatch != nil }
+        let matches = scored.filter { $0.spatialMatch == true }.count
+        let spatialMisses = scored.filter { $0.spatialMatch == false }.count
+        let misses = trials.filter { $0.invalidReason == "miss" }.count
+
+        return KineticRecap(
+            trialCount: trials.count,
+            plannedTrials: maxTrials,
+            medianMotorRtMs: KineticRecap.median(motorRTs),
+            meanMotorRtMs: KineticRecap.mean(motorRTs),
+            motorSampleCount: motorRTs.count,
+            spatialAccuracyPercent: spatialAccuracyPercent,
+            spatialMatchCount: matches,
+            spatialScoredCount: scored.count,
+            missCount: misses,
+            spatialMissCount: spatialMisses,
+            breakPointTrial: breakPointTrial,
+            baselineMeanMs: baselineMeanMs,
+            baselineStdMs: baselineStdMs,
+            completedNaturally: completedNaturally
+        )
     }
 
     func stopSession() {

@@ -12,6 +12,8 @@ final class WatchSessionManager: NSObject {
     var isCalibrating = false
     /// Latest workout heart rate (BPM) from HealthKit during keep-alive.
     private(set) var lastHeartRateBpm: Double?
+    /// Wall-clock when the last HR sample was published (Watch UI “Measured Xs ago”).
+    private(set) var lastHeartRateReceivedAt: Date?
     /// True after `startMonitoring()`; display sleep must not clear this.
     private(set) var isMonitoring = false
 
@@ -73,9 +75,12 @@ final class WatchSessionManager: NSObject {
             guard let self else { return }
             self.lastOffsetMs = sample.offsetMs
             self.lastRttMs = sample.rttMs
-            self.statusText = String(format: "sync RTT %.0fms", sample.rttMs)
             self.reportSyncQuality(sample)
             self.flushPendingStrikeIfPossible()
+            // Keep Health/workout / HR / calib copy on statusText; RTT has its own line.
+            if self.statusText == "Idle" || self.statusText == "Phone linked" || self.statusText == "Syncing…" {
+                self.statusText = self.workout.isActive ? "Workout on" : "Armed"
+            }
         }
         motion.onStrike = { [weak self] watchTime, peakG, octant in
             self?.sendStrike(watchTime: watchTime, peakG: peakG, detectedOctant: octant)
@@ -134,19 +139,24 @@ final class WatchSessionManager: NSObject {
     func startMonitoring() {
         guard !isMonitoring else { return }
         isMonitoring = true
+        statusText = "Health…"
         Task {
             do {
-                try await workout.start()
+                let result = try await workout.start()
+                switch result {
+                case .started:
+                    statusText = "Workout on"
+                case .authorizationDenied:
+                    statusText = "Allow Health"
+                case .healthUnavailable:
+                    statusText = "No HealthKit"
+                }
             } catch {
-                statusText = "Workout denied"
+                statusText = "Workout failed"
             }
             motion.start()
             clockSync.startPeriodicSync()
-            if clockSync.offsetSeconds == nil {
-                statusText = "Syncing…"
-            } else {
-                statusText = "Armed"
-            }
+            // Sync RTT is shown on its own line in the UI — don't clobber Health/workout status.
         }
     }
 
@@ -287,6 +297,7 @@ final class WatchSessionManager: NSObject {
 
     private func handleHeartRate(bpm: Double, hkStart: Date?, hkEnd: Date?) {
         lastHeartRateBpm = bpm
+        lastHeartRateReceivedAt = Date()
         let now = ProcessInfo.processInfo.systemUptime
         let bpmChanged = lastHeartRateSentBpm.map { abs($0 - bpm) >= 1 } ?? true
         let intervalOk = now - lastHeartRateSentAt >= heartRateMinInterval
@@ -306,14 +317,17 @@ final class WatchSessionManager: NSObject {
         sendOrTransfer(WatchOutboundMessage.heartRate(event))
         lastHeartRateSentAt = now
         lastHeartRateSentBpm = bpm
-        if !isCalibrating, statusText == "Armed" || statusText.hasPrefix("HR") || statusText.hasPrefix("sync") {
+        if !isCalibrating {
             statusText = String(format: "HR %.0f bpm", bpm)
         }
     }
 
     private func sendOrTransfer(_ payload: [String: Any]) {
         if transport.isReachable {
-            transport.sendMessage(payload, replyHandler: nil, errorHandler: { _ in })
+            transport.sendMessage(payload, replyHandler: nil, errorHandler: { [weak self] _ in
+                // Reachable can still fail mid-flight — queue delivery instead of dropping the sample.
+                self?.transport.transferUserInfo(payload)
+            })
         } else {
             transport.transferUserInfo(payload)
         }

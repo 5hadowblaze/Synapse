@@ -1,11 +1,14 @@
-import type {
-  GazeWindow,
-  Session,
-  SessionModule,
-  SessionSnapshot,
-  Trial,
-  TrialWithGaze,
+import {
+  type FocusEpoch,
+  type FocusPhase,
+  type GazeWindow,
+  type Session,
+  type SessionModule,
+  type SessionSnapshot,
+  type Trial,
+  type TrialWithGaze,
 } from '../types/session'
+import { simulateFocusDemo } from './focusFadeModel.js'
 
 function rand(seed: number): number {
   const x = Math.sin(seed * 12.9898) * 43758.5453
@@ -39,6 +42,7 @@ function baseSession(
     id,
     athleteId: 'athlete-demo',
     module,
+    moduleRaw: module,
     startedAt: Date.now() - 55_000,
     status: 'active',
     clockOffsetMs: 12.4,
@@ -50,6 +54,28 @@ function baseSession(
     lastHeartRatePhoneMs: null,
     lastHeartRateWatchMs: null,
     lastHeartRateSource: 'demo',
+    lastHeartRateHkStart: null,
+    lastHeartRateHkEnd: null,
+    lastHeartRateReceivedAtMs: null,
+    lastEpochIndex: null,
+    lastEpochAtMs: null,
+    lastEpochPhase: null,
+    focusFocusedSeconds: null,
+    focusBreakSeconds: null,
+    focusFadeCount: null,
+    focusMeanHrBpm: null,
+    focusExtendedOnce: null,
+    focusBaselineReady: null,
+    pvtPreMedianMs: null,
+    pvtPreLapses: null,
+    pvtPreValidTrials: null,
+    pvtPostMedianMs: null,
+    pvtPostLapses: null,
+    pvtPostValidTrials: null,
+    pvtMedianDeltaMs: null,
+    pvtPercentChange: null,
+    pvtLapseDelta: null,
+    pvtDirection: null,
     ...extras,
   }
 }
@@ -101,6 +127,7 @@ export function buildVisionDemoSnapshot(): SessionSnapshot {
       clockRttMs: 0,
     }),
     trials,
+    epochs: [],
   }
 }
 
@@ -155,14 +182,74 @@ export function buildKineticDemoSnapshot(): SessionSnapshot {
       breakPointTrial: 11,
     }),
     trials,
+    epochs: [],
   }
 }
 
-/** Default canned session for pitch fallback (Vision PVT). */
-export function buildDemoSnapshot(module: SessionModule = 'visionPvt'): SessionSnapshot {
-  return module === 'kineticClock'
-    ? buildKineticDemoSnapshot()
-    : buildVisionDemoSnapshot()
+// MARK: - Focus desk demo
+
+/**
+ * Focus desk demo — a warm start the detector waits out, one long slide the detector catches,
+ * a nudge the athlete waves off, then a second catch they take the break on.
+ *
+ * None of that is drawn by hand: `simulateFocusDemo` runs the canned desk signals through a
+ * mirror of the real `FocusFadeDetector`, so the baseline, the trip line, the two-sample
+ * debounce and the 90 s cooldown all land where the phone would put them. The seed script
+ * runs the same simulation, so `/demo/focus` and the seeded session are the same block.
+ */
+export function buildFocusDemoSnapshot(): SessionSnapshot {
+  const { epochs: rows, summary } = simulateFocusDemo()
+
+  const epochs: FocusEpoch[] = rows.map((row) => ({
+    id: String(row.index),
+    index: row.index,
+    phase: row.phase as FocusPhase,
+    phaseRaw: row.phase,
+    remainingMs: row.remainingMs,
+    fadeScore: row.fadeScore,
+    hrBpm: row.hrBpm,
+    arousalIndex: row.arousalIndex,
+    motionEnergy: row.motionEnergy,
+    fadeSuggested: row.fadeSuggested,
+  }))
+
+  return {
+    session: baseSession('demo-focus-001', 'focusDesk', {
+      startedAt: Date.now() - summary.totalSeconds * 1000,
+      status: 'complete',
+      clockOffsetMs: 9.6,
+      clockRttMs: 31,
+      // Raw window mean and σ, exactly as SessionWriter.writeBaseline sends them.
+      baselineGapMs: round3(summary.baselineMean),
+      baselineStdMs: round3(summary.baselineStd),
+      lastHeartRateBpm: summary.lastHrBpm == null ? null : Math.round(summary.lastHrBpm),
+      lastHeartRateSource: 'workoutBuilder',
+      focusFocusedSeconds: summary.focusedSeconds,
+      focusBreakSeconds: summary.breakSeconds,
+      focusFadeCount: summary.fadeCount,
+      focusMeanHrBpm: Math.round(summary.meanHrBpm * 10) / 10,
+      focusExtendedOnce: false,
+      focusBaselineReady: summary.baselineReady,
+    }),
+    trials: [],
+    epochs,
+  }
+}
+
+function round3(value: number | null): number | null {
+  return value == null ? null : Math.round(value * 1000) / 1000
+}
+
+/** Default canned session for pitch fallback — Focus is the lead product. */
+export function buildDemoSnapshot(module: SessionModule = 'focusDesk'): SessionSnapshot {
+  switch (module) {
+    case 'kineticClock':
+      return buildKineticDemoSnapshot()
+    case 'visionPvt':
+      return buildVisionDemoSnapshot()
+    default:
+      return buildFocusDemoSnapshot()
+  }
 }
 
 export const DEMO_SESSION_JSON = buildDemoSnapshot()

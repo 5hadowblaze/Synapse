@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clawd Pet — Reference Player</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; gap: 20px;
+    justify-content: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #14110f; color: #f2ede9;
+    padding: 24px;
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: 1px; color: #ff7a45; }
+  .stage {
+    width: 384px; height: 416px;
+    display: grid; place-items: center;
+    background:
+      linear-gradient(45deg, #201b18 25%, transparent 25%) -8px 0,
+      linear-gradient(-45deg, #201b18 25%, transparent 25%) -8px 0,
+      linear-gradient(45deg, transparent 75%, #201b18 75%),
+      linear-gradient(-45deg, transparent 75%, #201b18 75%);
+    background-size: 16px 16px; background-color: #2a2320;
+    border-radius: 12px;
+  }
+  canvas { image-rendering: pixelated; width: 384px; height: 416px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; max-width: 520px; justify-content: center; }
+  button {
+    font-family: inherit; font-size: 13px; cursor: pointer;
+    background: #3a302b; color: #f2ede9; border: 1px solid #55483f;
+    padding: 8px 12px; border-radius: 8px;
+  }
+  button.active { background: #ff7a45; color: #14110f; border-color: #ff7a45; font-weight: 700; }
+  .meta { font-size: 12px; color: #b8a99f; min-height: 16px; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>CLAWD</h1>
+  <div class="stage"><canvas id="c" width="192" height="208"></canvas></div>
+  <div class="controls" id="controls"></div>
+  <div class="meta" id="meta"></div>
+
+<script>
+const FW = 192, FH = 208;
+// state -> { row, frames, fps, loop }
+const STATES = {
+  "idle":          { row: 0, frames: 6, fps: 6,  loop: true  },
+  "running-right": { row: 1, frames: 8, fps: 12, loop: true  },
+  "running-left":  { row: 2, frames: 8, fps: 12, loop: true  },
+  "waving":        { row: 3, frames: 4, fps: 8,  loop: true  },
+  "jumping":       { row: 4, frames: 5, fps: 10, loop: false },
+  "failed":        { row: 5, frames: 8, fps: 10, loop: false },
+  "waiting":       { row: 6, frames: 6, fps: 6,  loop: true  },
+  "running":       { row: 7, frames: 6, fps: 8,  loop: true  },
+  "review":        { row: 8, frames: 6, fps: 8,  loop: true  },
+};
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const meta = document.getElementById("meta");
+
+let current = "idle";
+let frame = 0;
+let last = 0;
+let done = false;
+
+// Load the atlas; prefer webp, fall back to png.
+const sheet = new Image();
+sheet.onload = () => requestAnimationFrame(loop);
+sheet.onerror = () => { sheet.onerror = null; sheet.src = "assets/spritesheet.png"; };
+sheet.src = "assets/spritesheet.webp";
+
+function setState(name) {
+  current = name;
+  frame = 0;
+  done = false;
+  for (const b of document.querySelectorAll("button"))
+    b.classList.toggle("active", b.dataset.state === name);
+}
+
+function loop(t) {
+  const s = STATES[current];
+  if (t - last >= 1000 / s.fps) {
+    last = t;
+    if (!done) {
+      if (s.loop) {
+        frame = (frame + 1) % s.frames;
+      } else if (frame < s.frames - 1) {
+        frame++;
+      } else {
+        done = true;
+        // one-shot states fall back to idle shortly after finishing
+        setTimeout(() => setState("idle"), 500);
+      }
+    }
+  }
+  ctx.clearRect(0, 0, FW, FH);
+  ctx.drawImage(sheet, frame * FW, s.row * FH, FW, FH, 0, 0, FW, FH);
+  meta.textContent = `state: ${current}   frame: ${frame + 1}/${s.frames}   ${s.fps}fps   ${s.loop ? "loop" : "one-shot"}`;
+  requestAnimationFrame(loop);
+}
+
+// Build controls
+const controls = document.getElementById("controls");
+for (const name of Object.keys(STATES)) {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.dataset.state = name;
+  b.onclick = () => setState(name);
+  controls.appendChild(b);
+}
+setState("idle");
+</script>
+</body>
+</html>

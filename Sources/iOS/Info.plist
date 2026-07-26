@@ -22,17 +22,26 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Synapse reads heart rate, resting heart rate, HRV (SDNN), sleep, steps, active energy, and stand hours from Apple Health to show recovery and activity context while you pace Focus blocks. This is wellness context for pacing — not a diagnosis or medical measurement.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Synapse uses the front camera for TrueDepth face tracking and arm-direction preview during Kinetic Clock.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Synapse uses the microphone so the floating voice assistant can hear your commands.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Synapse converts your speech on-device so the voice assistant can navigate and coach sessions.</string>
-	<key>OPENAI_API_KEY</key>
+	<string>Synapse uses the microphone so the voice coach can hear you during Focus, breath, and optional check-in.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Synapse uses the local network for low-latency voice with the coach agent.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_livekit._tcp</string>
+		<string>_livekit._udp</string>
+	</array>
+	<key>ELEVENLABS_AGENT_ID</key>
 	<string></string>
 	<key>ELEVENLABS_API_KEY</key>
 	<string></string>
 	<key>ELEVENLABS_VOICE_ID</key>
+	<string></string>
+	<key>OPENAI_API_KEY</key>
 	<string></string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

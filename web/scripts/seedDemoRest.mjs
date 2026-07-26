@@ -1,12 +1,16 @@
 /**
  * Seed via Firestore REST + gcloud user token (bypasses client security rules).
  * Usage: node scripts/seedDemoRest.mjs
- * Seeds both visionPvt and kineticClock demo sessions.
+ * Seeds focusDesk, visionPvt and kineticClock demo sessions.
+ *
+ * The focusDesk block comes from src/data/focusFadeModel.js — the same simulation the
+ * offline demo runs — so the seeded session and /demo/focus cannot drift apart.
  */
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { simulateFocusDemo } from '../src/data/focusFadeModel.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const envPath = resolve(__dirname, '../.env')
@@ -23,6 +27,7 @@ const env = Object.fromEntries(
 const PROJECT = env.VITE_FIREBASE_PROJECT_ID || 'synapse-clinical-hz'
 const VISION_ID = env.VITE_VISION_SESSION_ID || env.VITE_DEFAULT_SESSION_ID || 'demo-vision-001'
 const KINETIC_ID = env.VITE_KINETIC_SESSION_ID || 'demo-kinetic-001'
+const FOCUS_ID = env.VITE_FOCUS_SESSION_ID || 'demo-focus-001'
 const TOKEN = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim()
 const BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents`
 
@@ -222,5 +227,77 @@ async function seedKinetic(sessionId) {
   console.log(`Seeded sessions/${sessionId} (kineticClock) with ${trials.length} trials via REST`)
 }
 
+// MARK: - focusDesk
+
+/**
+ * The Focus block is not authored here: `simulateFocusDemo` runs canned desk signals through
+ * a mirror of the real `FocusFadeDetector`, so this seeds exactly the session `/demo/focus`
+ * renders offline — same baseline, same debounce, same catches.
+ */
+async function seedFocus(sessionId) {
+  const { epochs, summary } = simulateFocusDemo()
+
+  await patch(`sessions/${sessionId}`, {
+    fields: {
+      athleteId: { stringValue: 'athlete-demo' },
+      module: { stringValue: 'focusDesk' },
+      startedAt: { integerValue: String(Date.now() - summary.totalSeconds * 1000) },
+      status: { stringValue: 'complete' },
+      clockOffsetMs: { doubleValue: 9.6 },
+      clockRttMs: { doubleValue: 31 },
+      // Raw window mean and σ, as SessionWriter.writeBaseline sends them (σ is not floored).
+      baselineGapMs: { doubleValue: Math.round(summary.baselineMean * 1000) / 1000 },
+      baselineStdMs: { doubleValue: Math.round(summary.baselineStd * 1000) / 1000 },
+      breakPointTrial: nullValue(),
+      lastHeartRateBpm: { doubleValue: Math.round(summary.lastHrBpm) },
+      lastHeartRateSource: { stringValue: 'workoutBuilder' },
+      focusFocusedSeconds: { doubleValue: summary.focusedSeconds },
+      focusBreakSeconds: { doubleValue: summary.breakSeconds },
+      focusFadeCount: { integerValue: String(summary.fadeCount) },
+      focusMeanHrBpm: { doubleValue: Math.round(summary.meanHrBpm * 10) / 10 },
+      focusExtendedOnce: { booleanValue: false },
+      focusBaselineReady: { booleanValue: summary.baselineReady },
+    },
+  })
+
+  for (const epoch of epochs) {
+    await patch(`sessions/${sessionId}/epochs/${epoch.index}`, {
+      fields: {
+        index: { integerValue: String(epoch.index) },
+        phase: { stringValue: epoch.phase },
+        remainingMs: { doubleValue: epoch.remainingMs },
+        fadeScore: { doubleValue: epoch.fadeScore },
+        hrBpm: { doubleValue: epoch.hrBpm },
+        arousalIndex: { doubleValue: epoch.arousalIndex },
+        motionEnergy: { doubleValue: epoch.motionEnergy },
+        fadeSuggested: { booleanValue: epoch.fadeSuggested },
+      },
+    })
+  }
+
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
+  console.log(
+    `Seeded sessions/${sessionId} (focusDesk): ${epochs.length} epochs, ` +
+      `trip ${summary.threshold.toFixed(3)}, ${summary.fadeCount} catches at ` +
+      `${summary.fadeFiredAt.map(mmss).join(' and ')} via REST`,
+  )
+}
+
+/**
+ * Older seeds ran longer, so a shorter re-seed would leave stale epochs on the tail of the
+ * document and the dashboard would render a block that never happened.
+ */
+async function pruneEpochs(sessionId, keepCount) {
+  for (let index = keepCount; index < keepCount + 12; index++) {
+    await fetch(`${BASE}/sessions/${sessionId}/epochs/${index}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+  }
+}
+
+const focusEpochCount = simulateFocusDemo().epochs.length
+await seedFocus(FOCUS_ID)
+await pruneEpochs(FOCUS_ID, focusEpochCount)
 await seedVision(VISION_ID)
 await seedKinetic(KINETIC_ID)

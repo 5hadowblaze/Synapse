@@ -45,7 +45,7 @@ export function TimelineChart({
     })
 
   return (
-    <div className="flex h-full min-h-[260px] flex-col rounded-sm border border-line bg-panel/70 p-4">
+    <div className="surface-lift flex h-full min-h-[260px] flex-col rounded-sm border border-line bg-panel/70 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-display text-sm font-medium tracking-wide text-fog">
           {kinetic ? 'Motor + spatial timeline' : 'Vision reaction timeline'}

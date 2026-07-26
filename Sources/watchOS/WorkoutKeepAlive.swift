@@ -5,22 +5,44 @@ import HealthKit
 /// Also streams workout heart rate (~1 BPM sample every few seconds on Series 5).
 @MainActor
 final class WorkoutKeepAlive: NSObject {
+    enum StartResult: Equatable {
+        case started
+        case healthUnavailable
+        case authorizationDenied
+    }
+
     private let store = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private(set) var isActive = false
     private(set) var lastHeartRateBpm: Double?
+    private(set) var lastStartResult: StartResult?
 
     /// `(bpm, hkStart, hkEnd)` — HealthKit window dates as `timeIntervalSinceReferenceDate`.
     var onHeartRate: (@MainActor (Double, Date?, Date?) -> Void)?
 
-    func start() async throws {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
+    func start() async throws -> StartResult {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            lastStartResult = .healthUnavailable
+            return .healthUnavailable
+        }
 
-        guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return }
+        guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            lastStartResult = .healthUnavailable
+            return .healthUnavailable
+        }
         let share: Set<HKSampleType> = [HKObjectType.workoutType()]
         let read: Set<HKObjectType> = [HKObjectType.workoutType(), heartRateType]
+        // Does not throw on Deny — always check status afterward.
         try await store.requestAuthorization(toShare: share, read: read)
+
+        let workoutStatus = store.authorizationStatus(for: HKObjectType.workoutType())
+        // Heart-rate *read* status is intentionally not always readable; starting the
+        // workout and watching for samples is the reliable signal. Workout share is.
+        if workoutStatus == .sharingDenied {
+            lastStartResult = .authorizationDenied
+            return .authorizationDenied
+        }
 
         let config = HKWorkoutConfiguration()
         config.activityType = .boxing
@@ -40,6 +62,8 @@ final class WorkoutKeepAlive: NSObject {
         session.startActivity(with: Date())
         try await builder.beginCollection(at: Date())
         isActive = true
+        lastStartResult = .started
+        return .started
     }
 
     func stop() async {

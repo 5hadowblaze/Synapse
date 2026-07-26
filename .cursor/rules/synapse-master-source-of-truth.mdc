@@ -9,5 +9,6 @@ Before planning or coding on Synapse, read [`docs/MASTER.md`](docs/MASTER.md). I
 
 - **Product:** Synapse Focus — health-aware Pomodoro / deep-work companion. Sensor fusion (phone vision + Watch IMU + HR) is the tech moat, not the cold-open pitch.
 - **Priorities:** Follow the build plan and ship status in MASTER. Do not reinvent the pitch or reposition the product.
+- **Design:** Before any UI work, follow MASTER §5 Design quality (research refs; no AI-generic UI; polish orb + timer).
 - **Schema:** Collection/field details stay in [`docs/SCHEMA.md`](docs/SCHEMA.md); MASTER owns the narrative and plan.
 - **Canvases:** Visual companions (e.g. `synapse-master-overview.canvas.tsx`) are secondary — never override MASTER.md.

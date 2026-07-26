@@ -53,6 +53,18 @@ enum SynapseSessionIDs {
     static let demo = "demo-session-001"
 }
 
+/// Optional post-block spoken check-in (self-report only — never inferred physiology).
+struct FocusCheckIn: Equatable, Sendable {
+    var skipped: Bool
+    var feltEnergy: Int?
+    var feltClarity: Int?
+    var nudgeMatched: Bool?
+    var wouldStopEarlier: Bool?
+    var summary: String?
+
+    static let skipped = FocusCheckIn(skipped: true)
+}
+
 /// Buffered fire-and-forget Firestore writer. Never await inside the game loop.
 @Observable
 @MainActor
@@ -111,16 +123,33 @@ final class SessionWriter {
     /// Latest discrete workout HR (Series 5 ~ every few seconds). Not fused to camera frames.
     func updateHeartRate(_ event: HeartRateEvent) {
         guard let sessionId else { return }
+        let wallMs = Date().timeIntervalSince1970 * 1000
         var fields: [String: Any] = [
             "lastHeartRateBpm": event.bpm,
+            // Uptime-domain (Cristian-aligned) — keep for fusion math; do not use for wall freshness.
             "lastHeartRatePhoneMs": event.phoneTimestamp * 1000,
             "lastHeartRateWatchMs": event.watchTimestamp * 1000,
-            "lastHeartRateSource": event.source
+            "lastHeartRateSource": event.source,
+            // Wall-clock ms so the web HUD can show "HR live · Ns ago".
+            "lastHeartRateReceivedAtMs": wallMs
         ]
         if let start = event.hkStart { fields["lastHeartRateHkStart"] = start }
         if let end = event.hkEnd { fields["lastHeartRateHkEnd"] = end }
         enqueue { [weak self] in
             self?.patchSession(sessionId, fields: fields)
+        }
+    }
+
+    /// Pitch/dashboard pointer — web "Find live" loads this without guessing a UUID.
+    func publishLiveFocusPointer(sessionId: String) {
+        enqueue { [weak self] in
+            self?.writeLiveFocusPointer(sessionId: sessionId, clear: false)
+        }
+    }
+
+    func clearLiveFocusPointer() {
+        enqueue { [weak self] in
+            self?.writeLiveFocusPointer(sessionId: nil, clear: true)
         }
     }
 
@@ -183,10 +212,59 @@ final class SessionWriter {
         }
     }
 
+    /// Follow-up write after session complete — talk-through self-report (or skip).
+    func writeFocusCheckIn(_ checkIn: FocusCheckIn) {
+        guard let sessionId else { return }
+        var fields: [String: Any] = [
+            "checkInSkipped": checkIn.skipped,
+            "checkInAt": Date().timeIntervalSince1970 * 1000
+        ]
+        if let v = checkIn.feltEnergy { fields["checkInFeltEnergy"] = v }
+        if let v = checkIn.feltClarity { fields["checkInFeltClarity"] = v }
+        if let v = checkIn.nudgeMatched { fields["checkInNudgeMatched"] = v }
+        if let v = checkIn.wouldStopEarlier { fields["checkInWouldStopEarlier"] = v }
+        if let v = checkIn.summary, !v.isEmpty { fields["checkInSummary"] = v }
+        enqueue { [weak self] in
+            self?.patchSession(sessionId, fields: fields)
+        }
+    }
+
+    /// Reaction check (tap PVT) for one stage. Summary lands on the session doc so the
+    /// dashboard can read it without a join; full trials go to `pvt/{stage}`.
+    func writeTapPVT(_ result: TapPVTResult) {
+        guard let sessionId else { return }
+        let prefix = "pvt\(result.stage.rawValue.capitalized)"
+        var fields: [String: Any] = [
+            "\(prefix)Lapses": result.lapseCount,
+            "\(prefix)FalseStarts": result.falseStartCount,
+            "\(prefix)ValidTrials": result.validCount
+        ]
+        if let median = result.medianRtMs { fields["\(prefix)MedianMs"] = median }
+        if let mean = result.meanRtMs { fields["\(prefix)MeanMs"] = mean }
+        enqueue { [weak self] in
+            self?.patchSession(sessionId, fields: fields)
+            self?.writeTapPVTDoc(sessionId: sessionId, result: result)
+        }
+    }
+
+    func writeTapPVTComparison(_ comparison: TapPVTComparison) {
+        guard let sessionId else { return }
+        var fields: [String: Any] = [
+            "pvtLapseDelta": comparison.lapseDelta,
+            "pvtDirection": comparison.direction.rawValue
+        ]
+        if let delta = comparison.medianDeltaMs { fields["pvtMedianDeltaMs"] = delta }
+        if let pct = comparison.percentChange { fields["pvtPercentChange"] = pct }
+        enqueue { [weak self] in
+            self?.patchSession(sessionId, fields: fields)
+        }
+    }
+
     func completeSession() {
         guard let sessionId else { return }
         enqueue { [weak self] in
             self?.patchSession(sessionId, fields: ["status": "complete"])
+            self?.writeLiveFocusPointer(sessionId: nil, clear: true)
         }
     }
 
@@ -341,12 +419,57 @@ final class SessionWriter {
         print("[SessionWriter stub] trial \(trial.index) gaze=\(gaze.count)")
     }
 
+    private func writeTapPVTDoc(sessionId: String, result: TapPVTResult) {
+        var data: [String: Any] = [
+            "stage": result.stage.rawValue,
+            "startedAt": result.startedAt.timeIntervalSince1970 * 1000,
+            "durationSeconds": result.durationSeconds,
+            "lapses": result.lapseCount,
+            "falseStarts": result.falseStartCount,
+            "validTrials": result.validCount,
+            "attemptedTrials": result.attemptedCount,
+            "lapseThresholdMs": TapPVTResult.lapseThresholdMs,
+            "trials": result.trials.map { trial -> [String: Any] in
+                var row: [String: Any] = [
+                    "index": trial.index,
+                    "isiMs": trial.isiMs,
+                    "falseStart": trial.falseStart,
+                    "timedOut": trial.timedOut,
+                    "lapse": trial.isLapse
+                ]
+                if let rt = trial.reactionMs { row["reactionMs"] = rt }
+                return row
+            }
+        ]
+        if let v = result.medianRtMs { data["medianRtMs"] = v }
+        if let v = result.meanRtMs { data["meanRtMs"] = v }
+        if let v = result.fastestRtMs { data["fastestRtMs"] = v }
+        if let v = result.slowestRtMs { data["slowestRtMs"] = v }
+
+        #if canImport(FirebaseFirestore)
+        if let db {
+            db.collection("sessions").document(sessionId)
+                .collection("pvt").document(result.stage.rawValue)
+                .setData(data) { [weak self] error in
+                    Task { @MainActor in
+                        self?.lastError = error?.localizedDescription
+                    }
+                }
+            return
+        }
+        #endif
+        stubWriteCount += 1
+        print("[SessionWriter stub] tap PVT \(result.stage.rawValue): \(data)")
+    }
+
     private func writeFocusEpochDoc(sessionId: String, epoch: FocusEpochSnapshot) {
+        let wallMs = Date().timeIntervalSince1970 * 1000
         var data: [String: Any] = [
             "index": epoch.index,
             "phase": epoch.phase,
             "remainingMs": epoch.remainingMs,
-            "fadeSuggested": epoch.fadeSuggested
+            "fadeSuggested": epoch.fadeSuggested,
+            "writtenAtMs": wallMs
         ]
         if let v = epoch.fadeScore { data["fadeScore"] = v }
         if let v = epoch.hrBpm { data["hrBpm"] = v }
@@ -362,10 +485,49 @@ final class SessionWriter {
                         self?.lastError = error?.localizedDescription
                     }
                 }
+            // Denormalise onto the session so the HUD can show "epochs live" without scanning the subcollection.
+            patchSession(sessionId, fields: [
+                "lastEpochIndex": epoch.index,
+                "lastEpochAtMs": wallMs,
+                "lastEpochPhase": epoch.phase
+            ])
             return
         }
         #endif
         stubWriteCount += 1
         print("[SessionWriter stub] focus epoch \(epoch.index): \(data)")
+    }
+
+    private func writeLiveFocusPointer(sessionId: String?, clear: Bool) {
+        #if canImport(FirebaseFirestore)
+        if let db {
+            let ref = db.collection("live").document("focus")
+            if clear {
+                ref.setData([
+                    "sessionId": NSNull(),
+                    "status": "idle",
+                    "updatedAtMs": Date().timeIntervalSince1970 * 1000
+                ]) { [weak self] error in
+                    Task { @MainActor in
+                        self?.lastError = error?.localizedDescription
+                    }
+                }
+            } else if let sessionId {
+                ref.setData([
+                    "sessionId": sessionId,
+                    "status": "active",
+                    "module": SessionModule.focusDesk.rawValue,
+                    "updatedAtMs": Date().timeIntervalSince1970 * 1000
+                ]) { [weak self] error in
+                    Task { @MainActor in
+                        self?.lastError = error?.localizedDescription
+                    }
+                }
+            }
+            return
+        }
+        #endif
+        stubWriteCount += 1
+        print("[SessionWriter stub] live/focus → \(sessionId ?? "cleared")")
     }
 }

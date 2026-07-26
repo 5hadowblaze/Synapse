@@ -3,14 +3,14 @@ import * as THREE from 'three'
 import {
   isKineticModule,
   octantLabel,
-  type SessionModule,
+  type ParsedModule,
   type TrialWithGaze,
 } from '../types/session'
 
 interface GazeFieldProps {
   trial: TrialWithGaze | null
   scrubMs: number
-  module: SessionModule
+  module: ParsedModule
 }
 
 /** 3×3 legacy pad positions (vision / legacy). */

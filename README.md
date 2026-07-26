@@ -1,6 +1,6 @@
 # Synapse
 
-**Synapse Focus** — health-aware Pomodoro for builders and students. Tech moat: fused phone camera + Watch motion + HR.
+**Synapse** — cognitive pacing, PVT-anchored. It looks like a Pomodoro timer; it's a pacing tool for people whose fatigue is a medical problem, not a productivity one. Tech moat: Watch HR + wrist motion + phone camera, read against your own baseline rather than a population norm.
 
 **Source of truth for agents and product:** [`docs/MASTER.md`](docs/MASTER.md)
 
@@ -22,3 +22,5 @@ cd web && npm install && npm run dev
 ```
 
 Schema detail: [`docs/SCHEMA.md`](docs/SCHEMA.md). Pitch / physical range condensed in MASTER §12.
+
+**Judge brief (1-pager):** [`docs/Synapse-Pitch.pdf`](docs/Synapse-Pitch.pdf) · markdown source [`docs/PITCH.md`](docs/PITCH.md)

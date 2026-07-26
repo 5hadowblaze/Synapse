@@ -6,6 +6,8 @@
     "module": "esnext",
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
+    /* src/data/focusFadeModel.js is plain JS so the node seed script can import it too. */
+    "allowJs": true,
     "skipLibCheck": true,
 
     /* Bundler mode */

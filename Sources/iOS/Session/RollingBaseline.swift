@@ -1,6 +1,13 @@
 import Foundation
 
 /// Shared mean + kσ threshold helper used by trial break-point and Focus fade.
+///
+/// **The window does not roll.** Despite the name, this collects exactly `capacity` samples,
+/// freezes `mean` and `std` at that point, and from then on only compares. Later values are
+/// never folded back in. That is deliberate for fade and break-point detection — both ask
+/// "how far is this from how you started?", and a window that kept sliding would quietly
+/// absorb the very drift they exist to catch. Callers that need a fresher reference should
+/// `reset()` or `reseed(_:)` rather than expecting the window to move on its own.
 struct RollingBaseline {
     let capacity: Int
     let sigmaMultiplier: Double
@@ -29,7 +36,20 @@ struct RollingBaseline {
         std = nil
     }
 
-    /// While collecting: append until capacity, then compute stats.
+    /// Replace the collected window wholesale and recompute, for callers that can only score
+    /// their samples correctly once the window is complete (Focus fade rescores its baseline
+    /// with the HR anchor and arousal statistics the window itself produced).
+    mutating func reseed(_ values: [Double]) {
+        samples = Array(values.suffix(capacity))
+        if samples.count == capacity {
+            recompute()
+        } else {
+            mean = nil
+            std = nil
+        }
+    }
+
+    /// While collecting: append until capacity, then compute stats and freeze them.
     /// After ready: return whether `value` exceeds mean + kσ (does not mutate further).
     @discardableResult
     mutating func ingest(_ value: Double) -> Bool {

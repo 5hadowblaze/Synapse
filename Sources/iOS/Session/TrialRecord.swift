@@ -4,7 +4,7 @@ import simd
 struct TrialRecord: Identifiable, Sendable, Equatable {
     var id: Int { index }
     let index: Int
-    /// Legacy 3×3 cell (0..8). Vision flash uses 4 (center). Kinetic may mirror targetOctant.
+    /// 3×3 cell (0..8, row-major). Vision flashes a peripheral cell (not 4); Kinetic may mirror targetOctant.
     let targetCell: Int
     var targetOnsetMs: Double?
     var saccadeOnsetMs: Double?

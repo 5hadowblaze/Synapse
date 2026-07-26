@@ -1,30 +1,33 @@
 import Foundation
 
-/// API keys for voice assistant. Prefer scheme env vars, then Info.plist, then local secrets plist.
+/// Voice agent config. Prefer scheme env vars, then Info.plist, then local secrets plist.
 /// Never commit real keys — see AGENTS.md / VoiceSecrets.plist.example.
+/// Full dashboard setup: docs/ELEVENLABS_AGENT.md
 enum VoiceConfig {
-    static var openAIKey: String {
-        string(for: "OPENAI_API_KEY")
+    /// Public Conversational Agent ID (required for voice).
+    static var elevenLabsAgentID: String {
+        string(for: "ELEVENLABS_AGENT_ID")
     }
 
+    /// Optional TTS voice override (Aerisita). Override with ELEVENLABS_VOICE_ID.
+    static var elevenLabsVoiceID: String {
+        let id = string(for: "ELEVENLABS_VOICE_ID")
+        return id.isEmpty ? "03vEurziQfq3V8WZhQvn" : id
+    }
+
+    /// Optional — not required for public-agent WebRTC. Kept for future token backends.
     static var elevenLabsKey: String {
         string(for: "ELEVENLABS_API_KEY")
     }
 
-    /// Default ElevenLabs voice; override with ELEVENLABS_VOICE_ID.
-    static var elevenLabsVoiceID: String {
-        let id = string(for: "ELEVENLABS_VOICE_ID")
-        return id.isEmpty ? "21m00Tcm4TlvDq8ikWAM" : id // Rachel
+    /// Optional — Focus pattern tip polish only; not used by the voice agent.
+    static var openAIKey: String {
+        string(for: "OPENAI_API_KEY")
     }
 
-    /// Realtime model id (override with OPENAI_REALTIME_MODEL).
-    static var realtimeModel: String {
-        let id = string(for: "OPENAI_REALTIME_MODEL")
-        return id.isEmpty ? "gpt-4o-realtime-preview" : id
-    }
-
+    /// Voice is ready when a public agent ID is present.
     static var isConfigured: Bool {
-        !openAIKey.isEmpty && !elevenLabsKey.isEmpty
+        !elevenLabsAgentID.isEmpty
     }
 
     private static func string(for key: String) -> String {
@@ -40,8 +43,6 @@ enum VoiceConfig {
         return ""
     }
 
-    /// Optional local file: put `VoiceSecrets.plist` in the app container Documents
-    /// (or rely on scheme env / Info.plist). Bundle lookup is best-effort only.
     private static func loadSecretsPlist() -> [String: Any]? {
         let candidates: [URL?] = [
             Bundle.main.url(forResource: "VoiceSecrets", withExtension: "plist"),

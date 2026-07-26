@@ -8,6 +8,8 @@ struct FaceARPreviewView: UIViewRepresentable {
     let session: ARSession
     var isTracked: Bool
     var saccadeFlashToken: Int
+    /// Selfie-mirrored preview. Kinetic arm→octant math is calibrated in mirrored
+    /// screen space (12 up, 3 right); keep this `true` so mesh + arm wireframe + spokes agree.
     var mirrored: Bool = true
     /// When set, draws Vision arm joints / bones as a white wireframe net (matches face mesh).
     var armJoints: [FrontArmEstimator.OverlayJoint] = []

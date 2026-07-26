@@ -47,6 +47,14 @@ final class FrontArmEstimator: @unchecked Sendable {
         let statusText: String
     }
 
+    /// Shared Vision frame: arm octant (optional) + posture upper-body proxy.
+    struct FrameResult: Sendable {
+        let arm: Result?
+        let postureFeatures: PostureFeatures?
+        let postureJoints: [PostureOverlayJoint]
+        let postureBones: [(CGPoint, CGPoint)]
+    }
+
     private let bodyRequest = VNDetectHumanBodyPoseRequest()
     private let handRequest = VNDetectHumanHandPoseRequest()
     private let queue = DispatchQueue(label: "com.synapse.frontArm", qos: .userInitiated)
@@ -64,31 +72,94 @@ final class FrontArmEstimator: @unchecked Sendable {
         side: KineticArmSide = .right,
         completion: @escaping (Result) -> Void
     ) {
+        processFrame(
+            pixelBuffer: pixelBuffer,
+            orientation: orientation,
+            side: side,
+            needArm: true,
+            needPosture: false,
+            faceDistanceMeters: nil
+        ) { frame in
+            completion(frame.arm ?? Result(
+                octant: nil,
+                joints: [],
+                bones: [],
+                isTracking: false,
+                statusText: "Arm: idle"
+            ))
+        }
+    }
+
+    /// One body-pose request shared by Kinetic arm pointing and Posture Check.
+    func processFrame(
+        pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation = .right,
+        side: KineticArmSide = .right,
+        needArm: Bool,
+        needPosture: Bool,
+        faceDistanceMeters: Double?,
+        completion: @escaping (FrameResult) -> Void
+    ) {
+        guard needArm || needPosture else { return }
         let now = CACurrentMediaTime()
         guard now - lastProcessTime >= minInterval else { return }
         lastProcessTime = now
 
         queue.async { [bodyRequest, handRequest] in
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
+            var requests: [VNRequest] = [bodyRequest]
+            if needArm {
+                requests.append(handRequest)
+            }
             do {
-                try handler.perform([bodyRequest, handRequest])
+                try handler.perform(requests)
             } catch {
-                completion(Result(
-                    octant: nil,
-                    joints: [],
-                    bones: [],
-                    isTracking: false,
-                    statusText: "Arm Vision error"
+                let emptyArm = needArm
+                    ? Result(
+                        octant: nil,
+                        joints: [],
+                        bones: [],
+                        isTracking: false,
+                        statusText: "Arm Vision error"
+                    )
+                    : nil
+                completion(FrameResult(
+                    arm: emptyArm,
+                    postureFeatures: nil,
+                    postureJoints: [],
+                    postureBones: []
                 ))
                 return
             }
 
-            let result = Self.estimate(
-                body: bodyRequest.results?.first,
-                hands: handRequest.results ?? [],
-                side: side
-            )
-            completion(result)
+            let body = bodyRequest.results?.first
+            let arm: Result? = needArm
+                ? Self.estimate(
+                    body: body,
+                    hands: needArm ? (handRequest.results ?? []) : [],
+                    side: side
+                )
+                : nil
+
+            var postureFeatures: PostureFeatures?
+            var postureJoints: [PostureOverlayJoint] = []
+            var postureBones: [(CGPoint, CGPoint)] = []
+            if needPosture {
+                let extracted = PostureFeatureExtractor.extract(
+                    body: body,
+                    faceDistanceMeters: faceDistanceMeters
+                )
+                postureFeatures = extracted.features
+                postureJoints = extracted.joints
+                postureBones = extracted.bones
+            }
+
+            completion(FrameResult(
+                arm: arm,
+                postureFeatures: postureFeatures,
+                postureJoints: postureJoints,
+                postureBones: postureBones
+            ))
         }
     }
 

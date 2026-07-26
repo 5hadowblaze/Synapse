@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { AlertBannerShell } from './motion/AlertBannerShell'
 
 interface BreakPointBannerProps {
   breakPointTrial: number | null
@@ -39,21 +40,23 @@ export function BreakPointBanner({ breakPointTrial }: BreakPointBannerProps) {
     prevRef.current = breakPointTrial
   }, [breakPointTrial])
 
-  if (breakPointTrial == null) return null
-
   return (
-    <div
-      className="fixed inset-x-0 top-0 z-50 animate-[pulse-alert_1.2s_ease-in-out_infinite] border-b-2 border-alert bg-alert text-ink shadow-[0_12px_40px_rgba(255,59,78,0.45)]"
+    <AlertBannerShell
+      show={breakPointTrial != null}
+      bannerKey={
+        breakPointTrial != null ? `bp-${breakPointTrial}` : 'bp-none'
+      }
+      tone="alert"
       role="alert"
     >
       <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-5 py-3">
         <div className="font-display text-lg font-semibold tracking-wide uppercase md:text-2xl">
-          Fatigue break-point detected — Trial {breakPointTrial}
+          Break-point detected — Trial {breakPointTrial}
         </div>
         <div className="hidden font-mono text-xs tracking-[0.15em] uppercase sm:block">
           Gap exceeded baseline + 2σ
         </div>
       </div>
-    </div>
+    </AlertBannerShell>
   )
 }

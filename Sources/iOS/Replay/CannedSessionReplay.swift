@@ -37,9 +37,10 @@ enum CannedSessionFactory {
                 visualRt = baselineMean + Double.random(in: 0...1.5) * baselineStd
             }
             let saccade = targetOnset + visualRt
+            let cell = VisionPVTLayout.peripheralCells[i % VisionPVTLayout.peripheralCells.count]
             let trial = TrialRecord(
                 index: i,
-                targetCell: 4,
+                targetCell: cell,
                 targetOnsetMs: targetOnset,
                 saccadeOnsetMs: saccade,
                 gazeSettleMs: saccade + 40,

@@ -3,13 +3,11 @@ import SwiftUI
 import UIKit
 
 /// Floating 8-pad Batak-style clock in SceneKit. Depth-locked ~0.6–0.8 m;
-/// parallax from front-camera face position (no rear world tracking).
+/// fixed in camera view (no face parallax) — framing prompts coach the user instead.
 struct BatakClockSceneView: UIViewRepresentable {
     var activeOctant: Int?
     var lastDetectedOctant: Int? = nil
     var spatialMatch: Bool? = nil
-    /// Face translation in camera meters; drives parallax so the clock feels planted.
-    var facePositionCamera: SIMD3<Float>? = nil
     /// Ring depth in front of the virtual camera (meters).
     var depthMeters: Float = 0.7
 
@@ -35,7 +33,6 @@ struct BatakClockSceneView: UIViewRepresentable {
             activeOctant: activeOctant,
             lastDetectedOctant: lastDetectedOctant,
             spatialMatch: spatialMatch,
-            facePositionCamera: facePositionCamera,
             depthMeters: depthMeters
         )
     }
@@ -46,11 +43,6 @@ struct BatakClockSceneView: UIViewRepresentable {
         private var padNodes: [Int: SCNNode] = [:]
         private var baseDepth: Float = 0.7
 
-        /// Lateral/vertical parallax gain (meters of clock shift per meter of face shift).
-        private let parallaxGain: Float = 0.85
-        private let maxParallax: Float = 0.12
-        private let tiltGain: Float = 0.35
-
         func buildScene(depth: Float) -> SCNScene {
             baseDepth = depth
             let scene = SCNScene()
@@ -58,7 +50,10 @@ struct BatakClockSceneView: UIViewRepresentable {
 
             let cameraNode = SCNNode()
             cameraNode.camera = SCNCamera()
-            cameraNode.camera?.fieldOfView = 42
+            // Horizontal FOV so 3/9 o'clock pads stay inside the portrait frustum
+            // (default vertical FOV clips side orbs on narrow iPhones).
+            cameraNode.camera?.projectionDirection = .horizontal
+            cameraNode.camera?.fieldOfView = 48
             cameraNode.camera?.zNear = 0.05
             cameraNode.camera?.zFar = 4
             cameraNode.position = SCNVector3(0, 0, 0)
@@ -82,18 +77,19 @@ struct BatakClockSceneView: UIViewRepresentable {
             let root = SCNNode()
             root.name = "batakClock"
             // Slightly below eye line so punches read in front of the torso.
-            root.position = SCNVector3(0, -0.06, -depth)
+            root.position = SCNVector3(0, -0.04, -depth)
             scene.rootNode.addChildNode(root)
             clockRoot = root
 
             // Pads only — no rim, hub, spokes, or labels.
-            let ringRadius: Float = 0.18
+            // ringR 0.15 + active pad ~0.03 fits inside tan(24°)*depth at depth≈0.7.
+            let ringRadius: Float = 0.15
             for octant in ClockOctant.allCases {
                 let angle = Float(octant.angleRadians) - (.pi / 2)
                 let x = cos(angle) * ringRadius
                 let y = -sin(angle) * ringRadius
 
-                let pad = SCNSphere(radius: 0.022)
+                let pad = SCNSphere(radius: 0.02)
                 pad.firstMaterial = padMaterial(active: false, detected: false, match: nil)
                 let padNode = SCNNode(geometry: pad)
                 padNode.name = "pad-\(octant.rawValue)"
@@ -109,14 +105,12 @@ struct BatakClockSceneView: UIViewRepresentable {
             activeOctant: Int?,
             lastDetectedOctant: Int?,
             spatialMatch: Bool?,
-            facePositionCamera: SIMD3<Float>?,
             depthMeters: Float
         ) {
             if abs(depthMeters - baseDepth) > 0.01, let root = clockRoot {
                 baseDepth = depthMeters
-                var pos = root.position
-                pos.z = -depthMeters
-                root.position = pos
+                root.position = SCNVector3(0, -0.04, -depthMeters)
+                root.eulerAngles = SCNVector3(0, 0, 0)
             }
 
             for (raw, node) in padNodes {
@@ -130,36 +124,6 @@ struct BatakClockSceneView: UIViewRepresentable {
                 let scale: Float = isActive ? 1.35 : 1.0
                 node.simdScale = SIMD3<Float>(repeating: scale)
             }
-
-            updateParallax(facePositionCamera: facePositionCamera)
-        }
-
-        private func updateParallax(facePositionCamera: SIMD3<Float>?) {
-            guard let root = clockRoot else { return }
-            guard let face = facePositionCamera else {
-                SCNTransaction.begin()
-                SCNTransaction.animationDuration = 0.2
-                root.position = SCNVector3(0, -0.06, -baseDepth)
-                root.eulerAngles = SCNVector3(0, 0, 0)
-                SCNTransaction.commit()
-                return
-            }
-
-            // Face moves right → clock shifts left so it feels room-fixed (mirrored front cam).
-            let rawX = -face.x * parallaxGain
-            let rawY = -face.y * parallaxGain
-            let dx = max(-maxParallax, min(maxParallax, rawX))
-            let dy = max(-maxParallax, min(maxParallax, rawY))
-
-            SCNTransaction.begin()
-            SCNTransaction.animationDuration = 0.08
-            root.position = SCNVector3(dx, -0.06 + dy, -baseDepth)
-            root.eulerAngles = SCNVector3(
-                dy * tiltGain * 0.5,
-                dx * tiltGain,
-                0
-            )
-            SCNTransaction.commit()
         }
 
         private func padMaterial(active: Bool, detected: Bool, match: Bool?) -> SCNMaterial {
