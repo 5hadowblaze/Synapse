@@ -1,0 +1,49 @@
+name: Deploy Synapse launch site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'launch/**'
+      - '.github/workflows/deploy-launch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launch/package-lock.json
+      - uses: actions/configure-pages@v6
+      - name: Install
+        working-directory: launch
+        run: npm ci
+      - name: Build
+        working-directory: launch
+        run: npm run build
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: launch/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
