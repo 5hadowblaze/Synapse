@@ -11,7 +11,7 @@ export function MakerGuide({ section }: { section: string }) {
       transition={{ type: 'spring', stiffness: 100, damping: 20, mass: 0.9 }}
     >
       <img src={`${import.meta.env.BASE_URL}media/dzak-dzulzalani.jpg`} alt="Dzak Dzulzalani" />
-      <span className="maker-guide-name">Built by <b>Dzak Dzulzalani</b></span>
+      <a className="maker-guide-name" href="https://www.linkedin.com/in/dzakdzulzalani/" target="_blank" rel="noreferrer">Built by <b>Dzak Dzulzalani</b></a>
     </motion.aside>
   )
 }
