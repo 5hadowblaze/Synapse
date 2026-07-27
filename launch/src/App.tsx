@@ -84,8 +84,9 @@ function Hero() {
     <section ref={ref} className="hero" data-section="hero">
       <div className="hero-grid" />
       <motion.div className="hero-copy" style={{ opacity, y }}>
-        <motion.div className="eyebrow hero-eyebrow" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
-          <span className="dot" /> HACKATHON BUILD · 2026
+        <motion.div className="event-lockup" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+          <div className="eyebrow hero-eyebrow"><span className="dot" /> JUNO HACKATHON BUILD · 2026</div>
+          <p className="event-date">SATURDAY 25 JULY → SUNDAY 26 JULY</p>
         </motion.div>
         <motion.img className="brand-mark" src={media('brand-mark.png')} alt="Synapse" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring', delay: 0.2 }} />
         <motion.h1 initial={{ opacity: 0, y: 32 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', delay: 0.32, damping: 22 }}>
@@ -250,7 +251,15 @@ function Close() {
   return (
     <section id="built-by" className="section close-section" data-section="built">
       <div className="close-rings"><i /><i /><i /></div>
-      <Reveal className="close-inner"><p className="eyebrow">BUILT BY AMIR DZAKWAN</p><h2>Build hard.<br /><em>Pace honestly.</em></h2><p>Synapse is a hackathon build spanning SwiftUI, Apple Watch, HealthKit, on-device sensing, ElevenLabs voice, Firebase and React.</p><div className="close-actions"><button className="button button-status large" type="button" disabled title="Coming to TestFlight soon">Coming to TestFlight soon <span>↗</span></button><a className="button button-quiet" href={links.dashboard} target="_blank" rel="noreferrer">Live dashboard <span>↗</span></a><a className="button button-quiet" href={links.github} target="_blank" rel="noreferrer">GitHub <span>↗</span></a></div></Reveal>
+      <Reveal className="close-inner">
+        <figure className="maker-portrait">
+          <img src={media('dzak-dzulzalani.jpg')} alt="Dzak Dzulzalani" />
+          <figcaption>BUILT BY DZAK DZULZALANI</figcaption>
+        </figure>
+        <h2>Build hard.<br /><em>Pace honestly.</em></h2>
+        <p>Synapse is a hackathon build spanning SwiftUI, Apple Watch, HealthKit, on-device sensing, ElevenLabs voice, Firebase and React.</p>
+        <div className="close-actions"><button className="button button-status large" type="button" disabled title="Coming to TestFlight soon">Coming to TestFlight soon <span>↗</span></button><a className="button button-quiet" href={links.dashboard} target="_blank" rel="noreferrer">Live dashboard <span>↗</span></a><a className="button button-quiet" href={links.github} target="_blank" rel="noreferrer">GitHub <span>↗</span></a></div>
+      </Reveal>
       <footer><span>© 2026 SYNAPSE</span><span>PHONE + WATCH · VOICE · WEB</span><span>COGNITIVE PACING, PVT-ANCHORED</span></footer>
     </section>
   )
