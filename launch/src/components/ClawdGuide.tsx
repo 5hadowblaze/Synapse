@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type ClawdState = 'waving' | 'running' | 'working' | 'waiting' | 'review' | 'idle'
 
@@ -26,8 +26,14 @@ const GUIDE: Record<string, GuideCopy> = {
 }
 
 export function ClawdGuide({ section }: { section: string }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const guide = GUIDE[section] ?? GUIDE.hero
+
+  useEffect(() => {
+    setOpen(true)
+    const timer = window.setTimeout(() => setOpen(false), 4600)
+    return () => window.clearTimeout(timer)
+  }, [section])
 
   return (
     <motion.aside

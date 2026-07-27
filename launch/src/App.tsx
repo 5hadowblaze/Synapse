@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useInView, useScroll, useSpring, useTransform } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ClawdGuide } from './components/ClawdGuide'
+import { MakerGuide } from './components/MakerGuide'
 
 const base = import.meta.env.BASE_URL
 const media = (name: string) => `${base}media/${name}`
@@ -252,10 +253,7 @@ function Close() {
     <section id="built-by" className="section close-section" data-section="built">
       <div className="close-rings"><i /><i /><i /></div>
       <Reveal className="close-inner">
-        <figure className="maker-portrait">
-          <img src={media('dzak-dzulzalani.jpg')} alt="Dzak Dzulzalani" />
-          <figcaption>BUILT BY DZAK DZULZALANI</figcaption>
-        </figure>
+        <p className="eyebrow close-maker-label">BUILT BY DZAK DZULZALANI</p>
         <h2>Build hard.<br /><em>Pace honestly.</em></h2>
         <p>Synapse is a hackathon build spanning SwiftUI, Apple Watch, HealthKit, on-device sensing, ElevenLabs voice, Firebase and React.</p>
         <div className="close-actions"><button className="button button-status large" type="button" disabled title="Coming to TestFlight soon">Coming to TestFlight soon <span>↗</span></button><a className="button button-quiet" href={links.dashboard} target="_blank" rel="noreferrer">Live dashboard <span>↗</span></a><a className="button button-quiet" href={links.github} target="_blank" rel="noreferrer">GitHub <span>↗</span></a></div>
@@ -272,7 +270,7 @@ export default function App() {
     <main>
       <motion.div className="page-progress" style={{ scaleX: scrollYProgress }} />
       <div className={`ambient ambient-${active}`} aria-hidden="true" />
-      <header className="site-nav"><a href="#top" className="nav-logo"><img src={media('brand-mark.png')} alt="Synapse" /></a><nav>{sections.map(([id, label]) => <a key={id} href={`#${id}`} className={active === id ? 'active' : ''}>{label}</a>)}</nav><a className="nav-dashboard" href={links.dashboard} target="_blank" rel="noreferrer">LIVE DASHBOARD ↗</a></header>
+      <header className="site-nav"><a href="#top" className="nav-logo"><img src={media('brand-mark.png')} alt="Synapse" /><span>Synapse</span></a><nav>{sections.map(([id, label]) => <a key={id} href={`#${id}`} className={active === id ? 'active' : ''}>{label}</a>)}</nav><a className="nav-dashboard" href={links.dashboard} target="_blank" rel="noreferrer">LIVE DASHBOARD ↗</a></header>
       <div id="top" />
       <Hero />
       <Story />
@@ -283,6 +281,7 @@ export default function App() {
       <Evidence />
       <Close />
       <ClawdGuide section={active} />
+      <MakerGuide section={active} />
     </main>
   )
 }
